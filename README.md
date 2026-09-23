@@ -41,7 +41,10 @@ Terminal 3:
 
 ```bash
 cd ~/Documents/github/mashang-hub
-HUB_URL=ws://127.0.0.1:3000 WORKER_SECRET=local-worker-secret npm run worker
+HUB_URL=ws://127.0.0.1:3000 \
+WORKER_SECRET=local-worker-secret \
+MASHANG_SERVICE_ROOT=$HOME/Documents/github/mashang-service \
+npm run worker
 ```
 
 Open <http://localhost:3000>. For user authentication, also set `HUB_ACCESS_TOKEN`; the UI will show a login page. Without it, local development has no user login gate.
@@ -63,7 +66,7 @@ Worker:
 HUB_URL=https://<sealos-domain>
 WORKER_SECRET=<private-worker-secret>
 OPENCODE_URL=http://127.0.0.1:4096
-MASHANG_SERVICE_ROOT=/Users/zihao_/Documents/github/mashang-service
+MASHANG_SERVICE_ROOT=$HOME/Documents/github/mashang-service
 npm run worker
 ```
 

@@ -8,9 +8,9 @@ import { timeoutConfig } from "../server/task-timeout.mjs";
 
 const hubURL = process.env.HUB_URL;
 const workerSecret = process.env.WORKER_SECRET;
-const workerId = process.env.WORKER_ID || "zihao-mac";
+const workerId = process.env.WORKER_ID || "local-worker";
 const opencodeURL = process.env.OPENCODE_URL || "http://127.0.0.1:4096";
-const projectRoot = process.env.MASHANG_SERVICE_ROOT || "/Users/zihao_/Documents/github/mashang-service";
+const projectRoot = process.env.MASHANG_SERVICE_ROOT;
 const heartbeatMs = Number(process.env.WORKER_HEARTBEAT_MS || 10000);
 const stateFile = process.env.WORKER_STATE_FILE || `${homedir()}/.mashang-hub/worker-state.json`;
 const artifactOutputRoots = ["outputs", "mashang_workspace/outputs"];
@@ -23,7 +23,7 @@ let socket;
 let eventReader;
 let busy = 0;
 
-if (!hubURL || !workerSecret) { console.error("HUB_URL and WORKER_SECRET are required"); process.exit(1); }
+if (!hubURL || !workerSecret || !projectRoot) { console.error("HUB_URL, WORKER_SECRET and MASHANG_SERVICE_ROOT are required"); process.exit(1); }
 
 const { requestMs, graceMs } = timeoutConfig();
 const safetyAbortMs = requestMs + graceMs;
