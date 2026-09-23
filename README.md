@@ -2,6 +2,8 @@
 
 Cloud control plane plus local execution worker. Hub does not access the local dataset or OpenCode directly. Worker is the only component that connects to `127.0.0.1:4096` and reads `mashang-service`.
 
+永久里程碑档案：[`docs/milestones.md`](docs/milestones.md)
+
 ## Architecture
 
 ```text
