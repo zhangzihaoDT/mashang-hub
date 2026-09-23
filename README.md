@@ -4,6 +4,8 @@ Cloud control plane plus local execution worker. Hub does not access the local d
 
 永久里程碑档案：[`docs/milestones.md`](docs/milestones.md)
 
+架构边界：[`docs/architecture-boundaries.md`](docs/architecture-boundaries.md)
+
 ## Architecture
 
 ```text
