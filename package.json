@@ -1,0 +1,25 @@
+{
+  "name": "mashang-hub",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "worker": "node worker/worker.mjs",
+    "test:dom": "node tests/dom-contract.mjs",
+    "test:task-state": "node tests/task-state.mjs",
+    "test:artifact": "node tests/artifact-contract.mjs",
+    "test:result-contract": "node tests/result-contract.mjs",
+    "test:artifact-policy": "node tests/artifact-policy.mjs",
+    "test:task-timeout": "node tests/task-timeout.mjs",
+    "test:task-log": "node tests/task-log.mjs",
+    "test": "npm run test:dom && npm run test:task-state && npm run test:task-timeout && npm run test:task-log && npm run test:artifact && npm run test:artifact-policy && npm run test:result-contract"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
