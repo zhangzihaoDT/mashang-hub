@@ -1,6 +1,30 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>mashang hub</title><link rel="stylesheet" href="/styles.css"><style>html,body{height:100%;overflow:hidden}body{display:grid;grid-template-rows:72px minmax(0,1fr) auto}.topbar{height:auto}.workspace{height:auto;min-height:0;overflow:hidden;margin:0 auto;width:100%;padding:22px}.panel{height:100%;min-height:0;display:flex;flex-direction:column}.panel-head,.session-meta,.run-state{flex-shrink:0}.messages,.result-body{min-height:0;overflow-y:auto}.messages{flex:1}.result-body{flex:1}.composer{position:static}.composer form{max-width:none}.composer textarea{min-width:0}.composer select{border:0;border-left:1px solid var(--line);background:#f7fafb;color:var(--blue);font:12px inherit;padding:0 12px;outline:0;max-width:190px}.composer select:disabled{color:var(--muted)}.message-meta{margin-top:9px;color:#9aa8b2;font-size:10px}@media(max-width:800px){body{grid-template-rows:60px minmax(0,1fr) auto}.workspace{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr);padding:12px;gap:12px}.composer{padding:10px 12px}.composer select{max-width:145px;padding:0 7px}}</style><style>.login-overlay{position:fixed;inset:0;z-index:10;display:grid;place-items:center;background:#fff9eff2}.login-card{width:min(360px,calc(100vw - 36px));padding:30px;background:white;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 50px #174a7c1f;text-align:center}.login-card .mark{margin:0 auto 12px}.login-card h2{color:var(--deep);margin:0}.login-card p{color:var(--muted);font-size:12px}.login-card input{width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;margin:8px 0;box-sizing:border-box}.login-card button{width:100%;padding:11px;border:0;border-radius:8px;background:var(--blue);color:white}.login-card #loginError{color:#a35c45;font-size:12px;margin-top:8px}</style></head>
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>mashang hub</title><link rel="stylesheet" href="/styles.css"><style>html,body{height:100%;overflow:hidden}body{display:grid;grid-template-rows:72px minmax(0,1fr) auto}.topbar{height:auto}.workspace{height:auto;min-height:0;overflow:hidden;margin:0 auto;width:100%;padding:22px}.panel{height:100%;min-height:0;display:flex;flex-direction:column}.panel-head,.session-meta,.run-state{flex-shrink:0}.messages,.result-body{min-height:0;overflow-y:auto}.messages{flex:1}.result-body{flex:1}.composer{position:static}.composer form{max-width:none}.composer textarea{min-width:0}.composer select{border:0;border-left:1px solid var(--line);background:#f7fafb;color:var(--blue);font:12px inherit;padding:0 12px;outline:0;max-width:190px}.composer select:disabled{color:var(--muted)}.message-meta{margin-top:9px;color:#9aa8b2;font-size:10px}@media(max-width:800px){body{grid-template-rows:60px minmax(0,1fr) auto}.workspace{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr);padding:12px;gap:12px}.composer{padding:10px 12px}.composer select{max-width:145px;padding:0 7px}}</style><style>.login-overlay{position:fixed;inset:0;z-index:10;display:grid;place-items:center;background:#fff9eff2}.login-card{width:min(360px,calc(100vw - 36px));padding:30px;background:white;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 50px #174a7c1f;text-align:center}.login-card .mark{margin:0 auto 12px}.login-card h2{color:var(--deep);margin:0}.login-card p{color:var(--muted);font-size:12px}.login-card input{width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;margin:8px 0;box-sizing:border-box}.login-card button{width:100%;padding:11px;border:0;border-radius:8px;background:var(--blue);color:white}.login-card #loginError{color:#a35c45;font-size:12px;margin-top:8px}</style><style>/* mobile-beta: temporary override, consolidate into styles.css later */
+@media (max-width:800px){
+html,body{height:auto;overflow:visible}
+body{display:block;padding-bottom:calc(88px + env(safe-area-inset-bottom))}
+.topbar{height:auto;padding:0 14px}
+.workspace{display:flex;flex-direction:column;gap:12px;padding:12px;margin:0;max-width:none;width:100%}
+.panel{height:auto;min-height:0;border-radius:12px}
+.panel-head{padding:16px 14px 12px}
+.session-meta{margin:0 12px}
+.messages{padding:14px;flex:none;overflow:visible}
+.result-body{padding:16px;flex:none;overflow:visible}
+.welcome{margin:40px 12px 0}
+.empty-result{margin-top:48px}
+.composer{position:fixed;left:0;right:0;bottom:0;padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--line);z-index:6}
+.composer textarea{min-height:40px}
+.composer select{max-width:132px}
+.hint{display:none}
+.cancel{padding:4px 10px;font-size:11px;border-radius:8px;margin-right:6px}
+.run-state{margin:4px 12px 0;padding:6px 10px;font-size:11px;gap:6px}
+.artifacts{margin:0 12px 12px}
+.result-body pre,.bubble pre,.artifact-markdown pre{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.artifact-preview,.artifact-markdown{overflow-x:auto}
+.result-body table{display:block;overflow-x:auto}
+.debug{left:12px;right:12px;width:auto;top:auto;bottom:calc(88px + env(safe-area-inset-bottom));max-height:55vh}
+}</style></head>
   <body>
     <header class="topbar"><div class="brand"><span class="mark">ZH</span><div><strong>mashang</strong><small>OpenCode research desk</small></div></div><div id="connection" class="connection disconnected"><i></i><span>Mac Worker Offline</span></div></header>
     <main class="workspace">
