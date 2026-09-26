@@ -80,7 +80,7 @@ function workerModelsMessage(message) {
   activeWorker.workerId = message.workerId;
   activeWorker.models = message.models || [];
   console.log(`worker connected: ${message.workerId}`);
-  workerStatus("ONLINE", { workerId: message.workerId, models: activeWorker.models });
+  workerStatus(worker.status, { workerId: message.workerId, models: activeWorker.models });
   sendWorker({ type: "worker.registered", workerId: message.workerId });
 }
 

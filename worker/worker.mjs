@@ -21,6 +21,7 @@ const sessionToTask = new Map();
 const progressSeen = new Map();
 let socket;
 let eventReader;
+let listening = false;
 let busy = 0;
 
 if (!hubURL || !workerSecret || !projectRoot) { console.error("HUB_URL, WORKER_SECRET and MASHANG_SERVICE_ROOT are required"); process.exit(1); }
@@ -82,12 +83,15 @@ function cancelTask(message) {
   record.controller.abort();
 }
 async function listenOpenCodeEvents() {
+  if (listening) return;
+  listening = true;
   try {
     const response = await openCode("/event", { headers: { accept: "text/event-stream" } }); if (!response.ok || !response.body) throw new Error(`event HTTP ${response.status}`);
-    console.log("opencode connected"); send({ type: "worker.status", workerId, status: "ONLINE", opencode: "CONNECTED" });
+    console.log("opencode connected"); send({ type: "worker.status", workerId, status: busy ? "BUSY" : "ONLINE", opencode: "CONNECTED" }); await publishRegistration();
     eventReader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
     while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); if (type.includes("permission")) send({ type: "permission.requested", requestId: event.properties?.id || event.properties?.permissionID, request: event.properties }); else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
   } catch { send({ type: "worker.status", workerId, status: "ERROR", opencode: "DISCONNECTED" }); setTimeout(listenOpenCodeEvents, 3000); }
+  finally { listening = false; }
 }
 async function handleTask(task) {
   console.log(`task received: ${task.taskId}`);
@@ -131,11 +135,13 @@ async function handleTask(task) {
     busy = Math.max(0, busy - 1);
   }
 }
-async function register() {
-  let models = []; let status = "ONLINE";
-  try { models = modelList(await openCodeJSON("/config/providers")); } catch (error) { status = "ERROR"; send({ type: "worker.status", workerId, status, error: error.message }); }
-  send({ type: "worker.register", workerId, status, models }); listenOpenCodeEvents();
+async function publishRegistration() {
+  let models = []; let status = busy ? "BUSY" : "ONLINE";
+  try { models = modelList(await openCodeJSON("/config/providers")); }
+  catch (error) { status = "ERROR"; send({ type: "worker.status", workerId, status, error: error.message }); }
+  send({ type: "worker.register", workerId, status, models });
 }
+async function register() { await publishRegistration(); listenOpenCodeEvents(); }
 function connect() {
   const url = new URL(hubURL); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = "/worker";
   socket = new WebSocket(url, { headers: { Authorization: `Bearer ${workerSecret}` } });
