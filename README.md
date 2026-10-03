@@ -27,6 +27,36 @@ The Hub stores lightweight in-memory Hub Session, task and Artifact metadata. Wo
 
 ## Local Run
 
+### One-click (recommended)
+
+`scripts/dev.sh` starts and stops all three processes (opencode, hub, worker) together, tracks their PIDs in `.local/pids/`, and writes logs to `.local/logs/`. It only manages the processes it started, skips a service whose port is already in use, and never launches a duplicate instance.
+
+```bash
+npm run up       # start opencode + hub + worker
+npm run down     # stop all three
+npm run restart  # stop then start
+npm run status   # show running state, PID files and log paths
+npm run logs     # tail all three logs
+```
+
+Open <http://localhost:3000> after `npm run up`.
+
+Optional overrides (environment variables):
+
+```bash
+PORT=3001 \
+HUB_HOST=127.0.0.1 \
+OPENCODE_PORT=4096 \
+WORKER_SECRET=local-worker-secret \
+MASHANG_SERVICE_ROOT=$HOME/Documents/github/mashang-service \
+HUB_ACCESS_TOKEN=<private-user-token> \
+npm run up
+```
+
+`scripts/dev.sh` also accepts `start|stop|restart|status|logs` directly. Setting `HUB_ACCESS_TOKEN` enables the browser login gate.
+
+### Manual (three terminals)
+
 Terminal 1:
 
 ```bash
