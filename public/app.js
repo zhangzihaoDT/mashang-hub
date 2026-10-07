@@ -1,4 +1,5 @@
 import { transitionTaskState } from "./task-state.js";
+import { initRuntimeUI } from "./runtime-ui.js";
 
 function $(selector) {
   const element = document.querySelector(selector);
@@ -129,6 +130,7 @@ function handleTerminal(event) {
 }
 function showPermission(request) { if (isTerminalState()) return; setStatus("WAITING_PERMISSION", "等待权限"); const box = document.createElement("div"); box.className = "permission"; box.innerHTML = `<strong>OpenCode 请求执行</strong><br><code>${escapeHTML(JSON.stringify(request))}</code><br><button data-choice="once">允许一次</button><button data-choice="reject">拒绝</button>`; $("#resultBody").prepend(box); box.addEventListener("click", async (event) => { const choice = event.target.dataset.choice; if (!choice) return; const id = request.id || request.permissionID || request.requestID; if (id) await api(`/api/permissions/${encodeURIComponent(id)}/reply`, { method: "POST", body: JSON.stringify({ response: choice }) }); box.remove(); if (!isTerminalState()) setStatus("RUNNING", "正在分析"); }); }
 function connectEvents() { const stream = new EventSource("/api/events"); stream.addEventListener("mashang", (message) => { const event = JSON.parse(message.data); logEvent(event);
+  if (event.type === "runtime.snapshot") { runtimeUI.update(event); return; }
   if (event.type === "worker.status") { state.models = event.models || state.models; if (event.models) renderModelOptions(event.models); setConnection(["ONLINE", "BUSY"].includes(event.status), event.status); return; }
   if (event.type === "session.mapped") { state.openCodeSessionId = event.openCodeSessionId; renderDebug(); return; }
   if (event.type === "task.timeout.warning") { if (!isTerminalState()) setStatusLabel("运行超时，正在尝试取消"); return; }
@@ -154,5 +156,6 @@ window.addEventListener("orientationchange", () => setTimeout(syncKeyboardInset,
 autosizePrompt();
 $("#newSession").addEventListener("click", async () => { state.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "mashang-hub" }) }); localStorage.setItem("mashang-hub-session", state.session.id); state.messages = []; state.artifacts = []; state.artifactScanText = ""; state.activeTaskId = null; state.taskState = "IDLE"; state.turnId = null; state.openCodeSessionId = null; renderSession(); renderMessages(); renderResult(""); renderArtifacts(); setStatus("IDLE"); updateCancelVisibility(); renderDebug(); });
 optional("#debugToggle")?.addEventListener("click", () => optional("#debug")?.classList.toggle("hidden")); optional("#debugClose")?.addEventListener("click", () => optional("#debug")?.classList.add("hidden"));
+const runtimeUI = initRuntimeUI();
 async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); connectEvents(); }
 initialize();
