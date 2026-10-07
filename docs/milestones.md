@@ -179,4 +179,53 @@ V0.2 之后，问题不再是“架构能不能成立”，而是进入产品化
 - 长期运行监控、告警与成本观测。
 - 后续再评估 Intent Router、Capability Resolver 和模型策略。
 
-这些内容不属于本 V0.2 里程碑的完成范围。
+ 这些内容不属于本 V0.2 里程碑的完成范围。
+
+## 2026-10-07 · V0.4 Launchd Runtime
+
+### 登录后自动托管 OpenCode + Mac Worker
+
+日常运行不再依赖进入仓库执行 `npm run up`。macOS 用户级 LaunchAgent 在登录后自动启动并持续托管两个进程：
+
+```text
+OpenCode     Worker dependency，本地 Agent Runtime
+Mac Worker   Execution Plane 本身，outbound WSS 连接远程 Hub
+```
+
+Hub 正式环境仍是 Sealos 控制面，不在本机 launchd 启动；`mashang-fetch`、`myknbase`、`mashang-service scheduler` 与 daily jobs 都不在 launchd 托管范围内。
+
+### 边界
+
+- launchd 只托管 OpenCode 与 Mac Worker 两个 agent。
+- Worker 通过 `HUB_URL` 连接 Sealos Hub，Hub 不落本机。
+- 现有 `npm run up/down` 与 `scripts/dev.sh` 保留为本地开发模式（含本地 Hub）。
+- 开发模式启动前会检测 launchd agent，存在时明确拒绝，避免重复实例。
+- Worker secret 写入用户级 plist（`600`），`launchd:status` 不回显环境变量。
+
+### Smoke Test 结果
+
+```text
+launchd:status                      OpenCode / Worker 均 running
+kill OpenCode → 自动恢复            新 PID，OpenCode 健康接口恢复 HTTP 200
+kill Worker → 自动恢复              新 PID，重连 Sealos :443 与本地 OpenCode
+Mac 重启后无命令自动恢复             重启后约 1 分钟两个 agent 自动拉起并重连
+launchd 运行期间 npm run up         被防重保护拦截，两 agent PID 不变
+```
+
+### 发布记录
+
+Git：
+
+```text
+Add launchd runtime management: 6bb0d8d
+Redact launchd status details: 0283528
+```
+
+Docker：
+
+```text
+docker.io/byte1717712/mashang-hub:0.2.4
+docker.io/byte1717712/mashang-hub:latest
+```
+
+镜像目标平台 `linux/amd64`，Sealos 正式环境指向该镜像。
