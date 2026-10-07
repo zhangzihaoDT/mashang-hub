@@ -19,20 +19,26 @@ export async function isPidAlive(pid) {
   }
 }
 
-/** Return every process whose full command matches `pattern` (pgrep -f). */
+/** Return every process whose full command matches `pattern`.
+ * Uses `ps` rather than `pgrep`: pgrep omits the calling process, which would
+ * make the Worker unable to detect its own process.
+ */
 export async function findProcesses(pattern) {
   if (!pattern) return [];
+  let matcher;
   try {
-    const { stdout } = await execFileAsync("pgrep", ["-fl", pattern]);
+    matcher = new RegExp(pattern);
+  } catch {
+    matcher = null;
+  }
+  try {
+    const { stdout } = await execFileAsync("ps", ["-Ao", "pid=,command="]);
     return stdout
       .split("\n")
-      .map((line) => line.trim())
+      .map((line) => line.match(/^\s*(\d+)\s+(.*)$/))
       .filter(Boolean)
-      .map((line) => {
-        const match = line.match(/^(\d+)\s+(.*)$/);
-        return match ? { pid: Number(match[1]), command: match[2] } : null;
-      })
-      .filter(Boolean);
+      .map((match) => ({ pid: Number(match[1]), command: match[2] }))
+      .filter((entry) => (matcher ? matcher.test(entry.command) : entry.command.includes(pattern)));
   } catch {
     return [];
   }

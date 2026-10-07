@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { basename, dirname, extname, relative, resolve } from "node:path";
 import { WebSocket } from "ws";
 import { isAllowedArtifactPath } from "./artifact-policy.mjs";
+import { buildRegistry } from "./runtime/registry.mjs";
+import { buildRuntimeSnapshot } from "./runtime/protocol.mjs";
 import { timeoutConfig } from "../server/task-timeout.mjs";
 
 const hubURL = process.env.HUB_URL;
@@ -23,6 +25,10 @@ let socket;
 let eventReader;
 let listening = false;
 let busy = 0;
+const runtimeRegistry = buildRegistry(process.env);
+const runtimeSnapshotMs = Number(process.env.RUNTIME_SNAPSHOT_INTERVAL_MS || 30000);
+let runtimeSequence = 0;
+let runtimePublishing = false;
 
 if (!hubURL || !workerSecret || !projectRoot) { console.error("HUB_URL, WORKER_SECRET and MASHANG_SERVICE_ROOT are required"); process.exit(1); }
 
@@ -141,11 +147,23 @@ async function publishRegistration() {
   catch (error) { status = "ERROR"; send({ type: "worker.status", workerId, status, error: error.message }); }
   send({ type: "worker.register", workerId, status, models });
 }
-async function register() { await publishRegistration(); listenOpenCodeEvents(); }
+async function publishRuntimeSnapshot() {
+  if (socket?.readyState !== WebSocket.OPEN || runtimePublishing) return;
+  runtimePublishing = true;
+  try {
+    runtimeSequence += 1;
+    send(await buildRuntimeSnapshot(runtimeRegistry, { workerId, sequence: runtimeSequence }));
+  } catch (error) {
+    console.log(`runtime snapshot failed: ${error.message}`);
+  } finally {
+    runtimePublishing = false;
+  }
+}
+async function register() { runtimeSequence = 0; await publishRegistration(); listenOpenCodeEvents(); publishRuntimeSnapshot(); }
 function connect() {
   const url = new URL(hubURL); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = "/worker";
   socket = new WebSocket(url, { headers: { Authorization: `Bearer ${workerSecret}` } });
   socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "permission.reply") openCode(`/permission/${encodeURIComponent(message.requestId)}/reply`, { method: "POST", body: JSON.stringify({ response: message.response }) }).catch(() => {}); } catch { /* Keep worker alive on malformed control messages. */ } });
   socket.on("close", () => setTimeout(connect, 2000)); socket.on("error", () => socket.close());
 }
-await loadMappings(); setInterval(heartbeat, heartbeatMs); connect();
+await loadMappings(); setInterval(heartbeat, heartbeatMs); setInterval(publishRuntimeSnapshot, runtimeSnapshotMs); connect();

@@ -5,6 +5,7 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { hasResult } from "./server/result-contract.mjs";
+import { sanitizeRuntimeSnapshot } from "./server/runtime-contract.mjs";
 import { createTurn, appendEvent, updateTurn, finalizeTurn, getTurn } from "./server/task-log.mjs";
 import { timeoutConfig, isTerminal, REASONS } from "./server/task-timeout.mjs";
 
@@ -22,6 +23,9 @@ const pendingArtifacts = new Map();
 const browserEvents = new Set();
 const authSessions = new Set();
 let activeWorker = null;
+let runtimeSnapshot = null;
+let runtimeReceivedAt = null;
+let runtimeSnapshotSequence = 0;
 
 function json(res, status, data, headers = {}) { res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...headers }); res.end(JSON.stringify(data)); }
 async function body(req) { let value = ""; for await (const chunk of req) value += chunk; return value ? JSON.parse(value) : {}; }
@@ -79,6 +83,7 @@ function workerModelsMessage(message) {
   workers.set(message.workerId, worker);
   activeWorker.workerId = message.workerId;
   activeWorker.models = message.models || [];
+  runtimeSnapshotSequence = 0;
   console.log(`worker connected: ${message.workerId}`);
   workerStatus(worker.status, { workerId: message.workerId, models: activeWorker.models });
   sendWorker({ type: "worker.registered", workerId: message.workerId });
@@ -107,6 +112,15 @@ function onWorkerMessage(message) {
   if (message.type === "artifact.response") {
     const pending = pendingArtifacts.get(message.requestId);
     if (pending) { pendingArtifacts.delete(message.requestId); pending.resolve(message); }
+    return;
+  }
+  if (message.type === "runtime.snapshot") {
+    const snapshot = sanitizeRuntimeSnapshot(message);
+    if (!snapshot || (snapshot.sequence !== null && snapshot.sequence <= runtimeSnapshotSequence)) return;
+    runtimeSnapshotSequence = snapshot.sequence ?? runtimeSnapshotSequence;
+    runtimeSnapshot = snapshot;
+    runtimeReceivedAt = new Date().toISOString();
+    broadcast({ type: "runtime.snapshot", workerOnline: Boolean(activeWorker), receivedAt: runtimeReceivedAt, snapshot });
     return;
   }
   if (message.type === "worker.status") { workerStatus(message.status, message); return; }
@@ -230,6 +244,7 @@ const server = createServer(async (req, res) => {
   if (url.pathname.startsWith("/api/") && !requireAuth(req, res)) return;
   if (url.pathname === "/api/health") return json(res, 200, { connected: Boolean(activeWorker), worker: activeWorker ? { id: activeWorker.workerId, status: workers.get(activeWorker.workerId)?.status || "CONNECTING" } : null });
   if (url.pathname === "/api/worker") return json(res, 200, { worker: activeWorker ? { id: activeWorker.workerId, status: workers.get(activeWorker.workerId)?.status || "CONNECTING" } : null });
+  if (url.pathname === "/api/runtime") return json(res, 200, { workerOnline: Boolean(activeWorker), receivedAt: runtimeReceivedAt, snapshot: runtimeSnapshot });
   if (url.pathname === "/api/models") return json(res, 200, { models: activeWorker?.models || [] });
   if (url.pathname === "/api/events") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive" }); browserEvents.add(res); res.write(`event: mashang\ndata: ${JSON.stringify({ type: "worker.status", status: activeWorker ? "ONLINE" : "OFFLINE" })}\n\n`); req.on("close", () => browserEvents.delete(res)); return;
@@ -293,6 +308,7 @@ wss.on("connection", (ws) => {
     activeWorker = null;
     for (const task of tasks.values()) if (!isTerminal(task.status)) finalizeTask(task, { event: "task.interrupted", status: "INTERRUPTED", reason: REASONS.WORKER_DISCONNECTED, error: "Mac Worker disconnected" });
     workerStatus("OFFLINE");
+    broadcast({ type: "runtime.snapshot", workerOnline: false, receivedAt: runtimeReceivedAt, snapshot: runtimeSnapshot });
   });
   ws.on("error", () => ws.close());
 });
