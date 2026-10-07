@@ -50,8 +50,9 @@ try {
     workerId: "test-worker",
     sequence: 1,
     generatedAt: "2026-10-07T00:00:00.000Z",
-    services: [{ id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: true, detail: "leak", pid: 5 }],
-    jobs: [{ id: "daily", label: "daily", lastRun: { status: "FAILED", source: "/local/leak" } }],
+    dependencies: [{ id: "opencode", label: "OpenCode", status: "OFFLINE", url: "http://127.0.0.1:4096" }],
+    services: [{ id: "fetch", label: "mashang-fetch", group: "APPS", status: "ONLINE", managed: true, openUrl: "http://127.0.0.1:7860", detail: "leak", pid: 5 }],
+    jobs: [{ id: "daily", label: "Daily pipeline", group: "MASHANG-SERVICE", lastRun: { status: "FAILED", source: "/local/leak" } }],
   }));
 
   const first = await waitFor(async () => {
@@ -61,8 +62,9 @@ try {
 
   assert.equal(first.workerOnline, true);
   assert.ok(first.receivedAt, "receivedAt must be Hub-generated");
-  assert.deepEqual(first.snapshot.services, [{ id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: true }]);
-  assert.deepEqual(first.snapshot.jobs, [{ id: "daily", label: "daily", lastRun: { status: "FAILED", startedAt: null, finishedAt: null } }]);
+  assert.deepEqual(first.snapshot.dependencies, [{ id: "opencode", label: "OpenCode", status: "OFFLINE" }]);
+  assert.deepEqual(first.snapshot.services, [{ id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: true, group: "APPS", openUrl: "http://127.0.0.1:7860/" }]);
+  assert.deepEqual(first.snapshot.jobs, [{ id: "daily", label: "Daily pipeline", lastRun: { status: "FAILED", startedAt: null, finishedAt: null }, group: "MASHANG-SERVICE" }]);
   const serialized = JSON.stringify(first.snapshot);
   assert.equal(serialized.includes("leak"), false);
   assert.equal(serialized.includes("/local"), false);
@@ -86,14 +88,16 @@ try {
     workerId: "test-worker",
     sequence: 2,
     generatedAt: "2026-10-07T00:00:10.000Z",
-    services: [{ id: "opencode", label: "OpenCode", status: "OFFLINE", managed: false }],
+    dependencies: [{ id: "opencode", label: "OpenCode", status: "OFFLINE" }],
+    services: [],
     jobs: [],
   }));
   const second = await waitFor(async () => {
     const body = await getRuntime();
     return body.snapshot?.sequence === 2 ? body : null;
   }, "newer sequence was not applied");
-  assert.equal(second.snapshot.services[0].id, "opencode");
+  assert.equal(second.snapshot.dependencies[0].id, "opencode");
+  assert.deepEqual(second.snapshot.services, []);
 
   ws.close();
   const offline = await waitFor(async () => {

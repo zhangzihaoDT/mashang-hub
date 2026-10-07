@@ -284,6 +284,11 @@ const server = createServer(async (req, res) => {
     const op = String(input.op || "");
     const targetId = String(input.targetId || "");
     if (!isValidControlOp(op) || !targetId) return json(res, 400, { error: "Invalid op or targetId" });
+    const serviceTarget = runtimeSnapshot?.services?.some((service) => service.id === targetId);
+    const jobTarget = runtimeSnapshot?.jobs?.some((job) => job.id === targetId);
+    const dependencyTarget = runtimeSnapshot?.dependencies?.some((dependency) => dependency.id === targetId);
+    const validTarget = !dependencyTarget && (op === "run" ? jobTarget : serviceTarget);
+    if (!validTarget) return json(res, 404, { error: "Unknown runtime target", reason: "UNKNOWN_TARGET" });
     if (!activeWorker || activeWorker.readyState !== 1) return json(res, 503, { error: "Mac Worker is offline" });
     const control = { controlId: `control_${randomUUID()}`, op, targetId, status: "AWAITING_PERMISSION", reason: null, code: null, timers: {}, createdAt: Date.now(), updatedAt: Date.now() };
     controls.set(control.controlId, control);

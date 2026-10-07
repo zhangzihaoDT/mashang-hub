@@ -50,6 +50,16 @@ try {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/worker`, { headers: { Authorization: `Bearer ${secret}` } });
   await new Promise((resolve, reject) => { ws.on("open", resolve); ws.on("error", reject); });
   ws.send(JSON.stringify({ type: "worker.register", workerId: "control-worker", status: "ONLINE", models: [] }));
+  ws.send(JSON.stringify({
+    type: "runtime.snapshot",
+    protocolVersion: 1,
+    workerId: "control-worker",
+    sequence: 1,
+    generatedAt: new Date().toISOString(),
+    dependencies: [{ id: "opencode", label: "OpenCode", status: "ONLINE" }],
+    services: [{ id: "instant", label: "instant", status: "ONLINE", managed: true }],
+    jobs: ["hold", "hold-drop"].map((id) => ({ id, label: id, lastRun: { status: "UNKNOWN" } })),
+  }));
   await sleep(100);
 
   const requests = [];
@@ -77,6 +87,12 @@ try {
 
   const badOp = await api("/api/runtime/control", "POST", { op: "stop", targetId: "x" });
   assert.equal(badOp.status, 400);
+  const dependencyControl = await api("/api/runtime/control", "POST", { op: "restart", targetId: "opencode" });
+  assert.equal(dependencyControl.status, 404);
+  assert.equal(dependencyControl.body.reason, "UNKNOWN_TARGET");
+  const wrongKind = await api("/api/runtime/control", "POST", { op: "run", targetId: "instant" });
+  assert.equal(wrongKind.status, 404);
+  assert.equal(wrongKind.body.reason, "UNKNOWN_TARGET");
 
   const decided = await api(`/api/runtime/controls/${controlId}/decision`, "POST", { approve: true });
   assert.equal(decided.body.status, "RUNNING");

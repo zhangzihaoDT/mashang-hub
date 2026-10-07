@@ -6,10 +6,11 @@
 
 ## 边界
 
-- Hub 不接收本地路径、命令、PID、URL、日志路径、原始错误详情或内部失败步骤。
-- Hub 只理解稳定字段：`id`、`label`、`status`、`managed`、`lastRun`。
-- 服务与任务的身份由 Worker 的 registry 定义；Hub 把它们当作不透明的通用条目。
-- 本版本只有只读状态的 Worker→Hub 推送，没有 `runtime.control` 或任何 Hub→Worker 控制消息。
+- Hub 不接收本地路径、命令、PID、探测 URL、日志路径、原始错误详情或内部失败步骤；service 可选上报供用户访问的 `openUrl`。
+- Hub 只理解通用字段：`id`、`label`、`status`、`managed`、`group`、`summary`、`openUrl`、`lastRun`。
+- Dependency、service 与 job 的身份由 Worker 的 registry 定义；Hub 把它们当作不透明的通用条目。
+- Worker 连接状态由 Hub 的连接状态表达，不属于 runtime service。
+- Dependency 只读；控制目标仅能是快照中的 service 或 job。
 
 ## 消息：`runtime.snapshot`
 
@@ -22,13 +23,18 @@ Worker 连接后在 `worker.register` 之后立即发送一次，随后周期性
   "workerId": "local-worker",
   "sequence": 1,
   "generatedAt": "2026-10-07T02:00:00.000Z",
+  "dependencies": [
+    { "id": "opencode", "label": "OpenCode", "status": "ONLINE" }
+  ],
   "services": [
-    { "id": "fetch", "label": "mashang-fetch", "status": "ONLINE", "managed": false }
+    { "id": "fetch", "label": "mashang-fetch", "group": "APPS", "status": "ONLINE", "managed": true, "openUrl": "http://127.0.0.1:7860" },
+    { "id": "scheduler", "label": "Scheduler", "group": "MASHANG-SERVICE", "summary": "后台服务", "status": "ONLINE", "managed": true }
   ],
   "jobs": [
     {
       "id": "daily",
-      "label": "mashang-service daily pipeline",
+      "label": "Daily pipeline",
+      "group": "MASHANG-SERVICE",
       "lastRun": {
         "status": "FAILED",
         "startedAt": "2026-10-07 09:00:01",
@@ -48,14 +54,22 @@ Worker 连接后在 `worker.register` 之后立即发送一次，随后周期性
 | `workerId` | string | Worker 身份 |
 | `sequence` | number | 当前连接内单调递增；Hub 丢弃重复或过期序号 |
 | `generatedAt` | string | Worker 生成时间，仅供参考 |
+| `dependencies[]` | array | Worker 依赖的本地运行组件，只读 |
+| `dependencies[].id` | string | 稳定机器标识 |
+| `dependencies[].label` | string | UI 展示名 |
+| `dependencies[].status` | enum | `ONLINE` \| `OFFLINE` \| `UNKNOWN` |
 | `services[]` | array | 服务条目 |
 | `services[].id` | string | 稳定机器标识 |
 | `services[].label` | string | UI 展示名 |
 | `services[].status` | enum | `ONLINE` \| `OFFLINE` \| `UNKNOWN` |
 | `services[].managed` | boolean | 是否由 Worker Runtime Manager 跟踪管理 |
+| `services[].group` | string \| omitted | 可选展示分组，Hub 不解释其业务含义 |
+| `services[].summary` | string \| omitted | 可选的简短说明 |
+| `services[].openUrl` | string \| omitted | 可选的用户访问入口；仅允许 HTTP(S)，不传探测 endpoint |
 | `jobs[]` | array | 任务条目 |
 | `jobs[].id` | string | 稳定机器标识 |
 | `jobs[].label` | string | UI 展示名 |
+| `jobs[].group` | string \| omitted | 可选展示分组；可与 service 共用分组 |
 | `jobs[].lastRun.status` | enum | `COMPLETED` \| `FAILED` \| `RUNNING` \| `UNKNOWN` |
 | `jobs[].lastRun.startedAt` | string \| null | 最近一次运行的开始时间 |
 | `jobs[].lastRun.finishedAt` | string \| null | 最近一次运行的结束时间 |
@@ -80,7 +94,7 @@ Hub 收到快照后按白名单清洗字段、校验枚举并限制条目数量�
 
 ## 控制：`runtime.control`（V1）
 
-控制是独立于状态快照的请求/终态语义。Hub 只传递通用的 `op` 与 `targetId`，不解释目标是什么。所有控制动作都是副作用操作，必须经过 Hub 的 Permission 门禁后才下发到 Worker。
+控制是独立于状态快照的请求/终态语义。Hub 只传递通用的 `op` 与 `targetId`，不解释目标业务含义。`up`、`down`、`restart` 仅接受当前快照中的 service；`run` 仅接受当前快照中的 job。Dependency 不可控制。未知或类型不匹配的目标由 Hub 中立拒绝（`UNKNOWN_TARGET`）。所有控制动作都是副作用操作，必须经过 Hub 的 Permission 门禁后才下发到 Worker。
 
 操作集：`up` | `down` | `restart` | `run`（均为小写）。
 
@@ -139,4 +153,4 @@ AWAITING_PERMISSION ──approve──▶ RUNNING ──worker result──▶ 
 ## 演进
 
 - `protocolVersion` 变更时，Hub 与 Worker 需能同时表达旧、新版本；当前只支持 `1`。
-- Hub UI 只读阶段不包含控制按钮；控制闭环先以 HTTP 接口与协议实现。
+- Runtime UI 对 Worker 和 dependencies 只读；services 提供 `up` / `down` / `restart`，jobs 提供 `run`。

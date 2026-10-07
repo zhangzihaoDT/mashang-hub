@@ -37,6 +37,9 @@ export async function probeService(service, options = {}) {
   return {
     id: service.id,
     label: service.label,
+    group: service.group ?? null,
+    summary: service.summary ?? null,
+    openUrl: service.openUrl ?? null,
     category: service.category || "service",
     description: service.description || "",
     online: Boolean(result.online),
@@ -50,6 +53,17 @@ export async function probeService(service, options = {}) {
   };
 }
 
+async function probeDependency(dependency, options = {}) {
+  const result = await runServiceProbe(dependency, options);
+  return {
+    id: dependency.id,
+    label: dependency.label,
+    online: Boolean(result.online),
+    detail: result.detail,
+    latencyMs: result.latencyMs ?? null,
+  };
+}
+
 export async function collectStatus(registry, options = {}) {
   const probeOptions = {
     timeoutMs: registry.probeTimeoutMs || 2500,
@@ -58,6 +72,7 @@ export async function collectStatus(registry, options = {}) {
   };
 
   const services = await Promise.all(registry.services.map((service) => probeService(service, probeOptions)));
+  const dependencies = await Promise.all((registry.dependencies || []).map((dependency) => probeDependency(dependency, probeOptions)));
 
   const jobs = await Promise.all(
     registry.jobs.map(async (job) => {
@@ -65,6 +80,7 @@ export async function collectStatus(registry, options = {}) {
       return {
         id: job.id,
         label: job.label,
+        group: job.group ?? null,
         description: job.description || "",
         status: result.status,
         startedAt: result.startedAt ?? null,
@@ -79,5 +95,5 @@ export async function collectStatus(registry, options = {}) {
     }),
   );
 
-  return { checkedAt: new Date().toISOString(), services, jobs };
+  return { checkedAt: new Date().toISOString(), dependencies, services, jobs };
 }

@@ -41,7 +41,13 @@ function jobLine(job) {
 }
 
 export function renderText(status) {
-  const lines = [`mashang runtime status  ${dim(status.checkedAt)}`, "", "SERVICES"];
+  const lines = [`mashang runtime status  ${dim(status.checkedAt)}`, "", "DEPENDENCIES"];
+  for (const dependency of status.dependencies || []) {
+    const tone = dependency.online ? green : red;
+    const dot = dependency.online ? green("●") : red("○");
+    lines.push(`  ${dot} ${pad(dependency.label, 26)} ${tone(dependency.online ? "online" : "offline")}  ${dim(truncate(dependency.detail))}`);
+  }
+  lines.push("", "SERVICES");
   for (const service of status.services) {
     lines.push(serviceLine(service));
     if (service.legacy?.length) lines.push(legacyLine(service));

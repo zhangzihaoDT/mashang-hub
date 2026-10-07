@@ -29,6 +29,14 @@ function portOf(url, fallback) {
   }
 }
 
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
 function mergeCommand(base, override) {
   if (base === undefined) return override;
   if (override === undefined) return base;
@@ -59,7 +67,7 @@ function mergeById(defaults, overrides) {
 }
 
 /**
- * Build the local services/jobs registry.
+ * Build the local runtime registry.
  *
  * This registry is data, not business logic: it declares how to reach each
  * local runtime, how to start/stop it with its *current canonical* entry, and
@@ -78,7 +86,6 @@ export function buildRegistry(env = process.env, config = null) {
   const schedulerLogDir = join(serviceRoot, "logs/scheduler");
 
   const opencodeURL = trimSlash(env.OPENCODE_URL || DEFAULT_OPENCODE_URL);
-  const opencodePort = portOf(opencodeURL, "4096");
   const fetchURL = trimSlash(env.MASHANG_FETCH_URL || DEFAULT_FETCH_URL);
   const myknbaseURL = trimSlash(env.MYKNBASE_URL || DEFAULT_MYKNBASE_URL);
   const myknbasePort = portOf(myknbaseURL, "7870");
@@ -91,12 +98,25 @@ export function buildRegistry(env = process.env, config = null) {
     probeTimeoutMs,
     verifyMs,
     runtimeDir,
+    dependencies: [
+      {
+        id: "opencode",
+        label: "OpenCode",
+        category: "dependency",
+        description: "Worker 本地 Agent Runtime",
+        probe: { type: "http", url: `${opencodeURL}/config/providers` },
+        match: "opencode serve",
+        logs: [{ label: "opencode", path: join(hubRoot, ".local/logs/opencode.log") }],
+      },
+    ],
     services: [
       {
         id: "fetch",
         label: "mashang-fetch",
+        group: "APPS",
         category: "service",
         description: "外部链接 → 本地结构化文件",
+        openUrl: originOf(fetchURL),
         probe: { type: "http", url: `${fetchURL}/api/formats` },
         match: "uvicorn server:app",
         logs: [{ label: "app", path: join(fetchRoot, ".local/app.log") }],
@@ -108,8 +128,10 @@ export function buildRegistry(env = process.env, config = null) {
       {
         id: "myknbase",
         label: "myknbase",
+        group: "APPS",
         category: "service",
         description: "个人本地知识库",
+        openUrl: originOf(myknbaseURL),
         probe: { type: "http", url: `${myknbaseURL}/api/health` },
         match: "server/index.js",
         logs: [],
@@ -119,45 +141,10 @@ export function buildRegistry(env = process.env, config = null) {
         },
       },
       {
-        id: "opencode",
-        label: "OpenCode",
-        category: "runtime",
-        description: "本地 Agent Runtime",
-        probe: { type: "http", url: `${opencodeURL}/config/providers` },
-        match: "opencode serve",
-        logs: [{ label: "opencode", path: join(hubRoot, ".local/logs/opencode.log") }],
-        control: {
-          start: { command: "opencode", args: ["serve", "--hostname", "127.0.0.1", "--port", opencodePort], cwd: serviceRoot, detach: true },
-          stop: { signal: "SIGTERM", timeoutMs: stopTimeoutMs },
-        },
-      },
-      {
-        id: "worker",
-        label: "Mac Worker",
-        category: "runtime",
-        description: "mashang-hub 本地执行端",
-        probe: { type: "process", match: "worker/worker.mjs", pidFile: join(hubRoot, ".local/pids/worker.pid") },
-        match: "worker/worker.mjs",
-        logs: [{ label: "worker", path: join(hubRoot, ".local/logs/worker.log") }],
-        control: {
-          start: {
-            command: "node",
-            args: ["worker/worker.mjs"],
-            cwd: hubRoot,
-            detach: true,
-            env: {
-              HUB_URL: env.HUB_URL || "ws://127.0.0.1:3000",
-              WORKER_SECRET: env.WORKER_SECRET || "local-worker-secret",
-              MASHANG_SERVICE_ROOT: serviceRoot,
-              OPENCODE_URL: opencodeURL,
-            },
-          },
-          stop: { signal: "SIGTERM", timeoutMs: stopTimeoutMs },
-        },
-      },
-      {
         id: "scheduler",
-        label: "mashang-service scheduler",
+        label: "Scheduler",
+        group: "MASHANG-SERVICE",
+        summary: "后台服务",
         category: "runtime",
         description: "常驻调度器（刷新 + 监控）",
         probe: { type: "process", match: "utility_scripts/sales_scheduler.py" },
@@ -179,7 +166,8 @@ export function buildRegistry(env = process.env, config = null) {
     jobs: [
       {
         id: "daily",
-        label: "mashang-service daily pipeline",
+        label: "Daily pipeline",
+        group: "MASHANG-SERVICE",
         description: "每日 09:00 刷新 → 校验 → 同步 → 监控",
         probe: { type: "scheduler-log", logDir: schedulerLogDir, steps: [...DAILY_PIPELINE_STEPS] },
         logs: [{ label: "daily (latest)", dir: schedulerLogDir, pattern: DATED_LOG_PATTERN }],
@@ -203,6 +191,7 @@ export function buildRegistry(env = process.env, config = null) {
     probeTimeoutMs: config.probeTimeoutMs || defaults.probeTimeoutMs,
     verifyMs: config.verifyMs || defaults.verifyMs,
     runtimeDir: config.runtimeDir || defaults.runtimeDir,
+    dependencies: mergeById(defaults.dependencies, config.dependencies),
     services: mergeById(defaults.services, config.services),
     jobs: mergeById(defaults.jobs, config.jobs),
   };

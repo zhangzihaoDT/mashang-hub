@@ -29,9 +29,9 @@ export async function resolveLogSource(source) {
   return { label: source.label, path: null, exists: false, size: null, mtime: null };
 }
 
-/** Flatten every registered log source across services and jobs. */
+/** Flatten every registered log source across dependencies, services and jobs. */
 export async function listLogSources(registry) {
-  const entries = [...(registry.services || []), ...(registry.jobs || [])].filter((entry) => (entry.logs || []).length);
+  const entries = [...(registry.dependencies || []), ...(registry.services || []), ...(registry.jobs || [])].filter((entry) => (entry.logs || []).length);
   const sources = [];
   for (const entry of entries) {
     for (const source of entry.logs) {

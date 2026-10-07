@@ -12,23 +12,30 @@ const clean = sanitizeRuntimeSnapshot({
   sequence: 4,
   generatedAt: "2026-10-07T00:00:00.000Z",
   evil: "x",
+  dependencies: [
+    { id: "opencode", label: "OpenCode", status: "ONLINE", managed: true, command: "ignored" },
+    { label: "no-id" },
+  ],
   services: [
-    { id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: true, detail: "HTTP 200", pid: 99, command: "rm -rf", path: "/local" },
+    { id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: true, group: "APPS", summary: "Fetch app", openUrl: "http://127.0.0.1:7860", detail: "HTTP 200", pid: 99, command: "rm -rf", path: "/local" },
     { id: "x", status: "BOGUS" },
+    { id: "unsafe", status: "ONLINE", openUrl: "javascript:alert(1)" },
     { label: "no-id" },
   ],
   jobs: [
-    { id: "daily", label: "daily", lastRun: { status: "FAILED", failedStep: "refresh_full", source: "/local" } },
+    { id: "daily", label: "Daily pipeline", group: "MASHANG-SERVICE", lastRun: { status: "FAILED", failedStep: "refresh_full", source: "/local" } },
     { id: "j2", status: "RUNNING" },
   ],
 });
 
 assert.deepEqual(clean.services, [
-  { id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: true },
+  { id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: true, group: "APPS", summary: "Fetch app", openUrl: "http://127.0.0.1:7860/" },
   { id: "x", label: "x", status: "UNKNOWN", managed: false },
+  { id: "unsafe", label: "unsafe", status: "ONLINE", managed: false },
 ]);
+assert.deepEqual(clean.dependencies, [{ id: "opencode", label: "OpenCode", status: "ONLINE" }]);
 assert.deepEqual(clean.jobs, [
-  { id: "daily", label: "daily", lastRun: { status: "FAILED", startedAt: null, finishedAt: null } },
+  { id: "daily", label: "Daily pipeline", lastRun: { status: "FAILED", startedAt: null, finishedAt: null }, group: "MASHANG-SERVICE" },
   { id: "j2", label: "j2", lastRun: { status: "UNKNOWN", startedAt: null, finishedAt: null } },
 ]);
 assert.equal(clean.sequence, 4);
