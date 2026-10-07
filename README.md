@@ -55,6 +55,30 @@ npm run up
 
 `scripts/dev.sh` also accepts `start|stop|restart|status|logs` directly. Setting `HUB_ACCESS_TOKEN` enables the browser login gate.
 
+### Login-time Runtime (macOS launchd, V1)
+
+For the Sealos deployment, a per-user LaunchAgent can start and keep **only OpenCode and Mac Worker** running after login. The Worker connects to the remote Hub through `HUB_URL`; this does not launch `server.mjs` locally and does not manage mashang-fetch, myknbase, the scheduler, or jobs.
+
+First stop any development-mode OpenCode/Worker process (`npm run down`), then install with the Sealos Hub URL and Worker secret:
+
+```bash
+HUB_URL=https://<sealos-domain> \
+WORKER_SECRET=<private-worker-secret> \
+MASHANG_SERVICE_ROOT=$HOME/Documents/github/mashang-service \
+npm run launchd:install
+```
+
+`HUB_URL` must use HTTPS except for a loopback development URL. The installer records absolute Node/OpenCode executable paths, creates two plists under `~/Library/LaunchAgents`, and stores logs under `~/Library/Logs/mashang-hub`. The Worker secret is stored in the per-user plist with mode `600`; keep the account private. Set `OPENCODE_BIN` if `opencode` is not on the current shell's `PATH`.
+
+```bash
+npm run launchd:status    # inspect the two user agents
+npm run launchd:restart   # restart OpenCode and Worker
+npm run launchd:logs      # follow their logs
+npm run launchd:uninstall # unload and remove only these two agents
+```
+
+The agents use `RunAtLoad` and `KeepAlive`, so they start at login and are relaunched if they exit. `npm run up/down` and `scripts/dev.sh` remain the separate local development mode, including its local Hub process; use `launchd:uninstall` to stop managing the login agents.
+
 ### Manual (three terminals)
 
 Terminal 1:

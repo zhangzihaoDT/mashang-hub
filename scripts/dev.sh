@@ -10,6 +10,7 @@ OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
 OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 WORKER_SECRET="${WORKER_SECRET:-local-worker-secret}"
 HUB_ACCESS_TOKEN="${HUB_ACCESS_TOKEN:-}"
+LAUNCHCTL_BIN="${LAUNCHCTL_BIN:-launchctl}"
 
 LOCAL_DIR="$ROOT/.local"
 LOG_DIR="$LOCAL_DIR/logs"
@@ -81,8 +82,27 @@ stop_proc() {
   rm -f "$PID_DIR/$name.pid"
 }
 
+launchd_runtime_active() {
+  command -v "$LAUNCHCTL_BIN" >/dev/null 2>&1 || return 1
+  local domain="gui/$(id -u)" label
+  for label in com.mashang-hub.opencode com.mashang-hub.worker; do
+    "$LAUNCHCTL_BIN" print "$domain/$label" >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
+refuse_launchd_conflict() {
+  if launchd_runtime_active; then
+    red "✗ launchd 正在托管 OpenCode / Mac Worker，已阻止开发模式重复启动。"
+    yellow "检查状态：npm run launchd:status；切回开发模式前先运行 npm run launchd:uninstall。"
+    return 0
+  fi
+  return 1
+}
+
 cmd_start() {
   echo "== mashang-hub start =="
+  if refuse_launchd_conflict; then return 1; fi
 
   if is_running opencode; then
     yellow "• opencode 已在运行 (pid $(pid_of opencode))"
@@ -181,6 +201,7 @@ case "${1:-}" in
   start) cmd_start ;;
   stop) cmd_stop ;;
   restart)
+    if refuse_launchd_conflict; then exit 1; fi
     cmd_stop
     echo
     cmd_start
