@@ -130,7 +130,7 @@ function handleTerminal(event) {
 }
 function showPermission(request) { if (isTerminalState()) return; setStatus("WAITING_PERMISSION", "等待权限"); const box = document.createElement("div"); box.className = "permission"; box.innerHTML = `<strong>OpenCode 请求执行</strong><br><code>${escapeHTML(JSON.stringify(request))}</code><br><button data-choice="once">允许一次</button><button data-choice="reject">拒绝</button>`; $("#resultBody").prepend(box); box.addEventListener("click", async (event) => { const choice = event.target.dataset.choice; if (!choice) return; const id = request.id || request.permissionID || request.requestID; if (id) await api(`/api/permissions/${encodeURIComponent(id)}/reply`, { method: "POST", body: JSON.stringify({ response: choice }) }); box.remove(); if (!isTerminalState()) setStatus("RUNNING", "正在分析"); }); }
 function connectEvents() { const stream = new EventSource("/api/events"); stream.addEventListener("mashang", (message) => { const event = JSON.parse(message.data); logEvent(event);
-  if (event.type === "runtime.snapshot") { runtimeUI.update(event); return; }
+  if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); return; }
   if (event.type === "worker.status") { state.models = event.models || state.models; if (event.models) renderModelOptions(event.models); setConnection(["ONLINE", "BUSY"].includes(event.status), event.status); return; }
   if (event.type === "session.mapped") { state.openCodeSessionId = event.openCodeSessionId; renderDebug(); return; }
   if (event.type === "task.timeout.warning") { if (!isTerminalState()) setStatusLabel("运行超时，正在尝试取消"); return; }
