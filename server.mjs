@@ -245,7 +245,7 @@ function createHubSession(title = "mashang-hub") {
 async function serveStatic(res, pathname) {
   const file = pathname === "/" ? join(publicDir, "index.html") : join(publicDir, pathname);
   if (!file.startsWith(publicDir)) return json(res, 403, { error: "Forbidden" });
-  try { const data = await readFile(file); const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" }; res.writeHead(200, { "content-type": `${types[extname(file)] || "application/octet-stream"}; charset=utf-8`, "cache-control": "no-store" }); res.end(data); } catch { json(res, 404, { error: "Not found" }); }
+  try { const data = await readFile(file); const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml" }; const type = types[extname(file)] || "application/octet-stream"; const contentType = type.startsWith("text/") || type === "image/svg+xml" ? `${type}; charset=utf-8` : type; res.writeHead(200, { "content-type": contentType, "cache-control": "no-store" }); res.end(data); } catch { json(res, 404, { error: "Not found" }); }
 }
 
 async function requestArtifact(req, res, download) {
