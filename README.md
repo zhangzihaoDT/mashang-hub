@@ -83,6 +83,19 @@ npm run worker
 
 Open <http://localhost:3000>. For user authentication, also set `HUB_ACCESS_TOKEN`; the UI will show a login page. Without it, local development has no user login gate.
 
+## Runtime Manager (read-only)
+
+The Mac Worker side carries a small services/jobs registry and a read-only `mashang status` command. It reports the online state of `mashang-fetch`, `myknbase`, `OpenCode`, the Worker process and the `mashang-service` scheduler, plus the latest `daily pipeline` result parsed from `logs/scheduler/YYYY-MM-DD.log`.
+
+```bash
+npm link                 # once, exposes the `mashang` command
+mashang status           # human-readable
+mashang status --json    # machine-readable
+mashang status --strict  # exit 1 if any service is offline or the daily job failed
+```
+
+Without linking, use `npm run mashang -- status` or `node worker/mashang.mjs status`. The registry lives in `worker/runtime/registry.mjs` and is data, not business logic: targets come from `MASHANG_SERVICE_ROOT`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MYKNBASE_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override. V0.1 is read-only — it never starts or stops a service.
+
 ## Production Environment
 
 Hub:

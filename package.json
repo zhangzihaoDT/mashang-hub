@@ -3,10 +3,15 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "mashang": "worker/mashang.mjs"
+  },
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
     "worker": "node worker/worker.mjs",
+    "mashang": "node worker/mashang.mjs",
+    "runtime:status": "node worker/mashang.mjs status",
     "up": "./scripts/dev.sh start",
     "down": "./scripts/dev.sh stop",
     "restart": "./scripts/dev.sh restart",
@@ -19,7 +24,8 @@
     "test:artifact-policy": "node tests/artifact-policy.mjs",
     "test:task-timeout": "node tests/task-timeout.mjs",
     "test:task-log": "node tests/task-log.mjs",
-    "test": "npm run test:dom && npm run test:task-state && npm run test:task-timeout && npm run test:task-log && npm run test:artifact && npm run test:artifact-policy && npm run test:result-contract"
+    "test:runtime": "node tests/runtime-registry.mjs && node tests/runtime-jobs.mjs",
+    "test": "npm run test:dom && npm run test:task-state && npm run test:task-timeout && npm run test:task-log && npm run test:artifact && npm run test:artifact-policy && npm run test:result-contract && npm run test:runtime"
   },
   "engines": {
     "node": ">=22"
