@@ -26,6 +26,7 @@ global.document = { getElementById: (id) => elements.get(id) || null };
 global.window = { setInterval: () => 1, clearInterval: () => {} };
 
 const calls = [];
+let controlsPayload = [];
 function runtimeResponse() {
   return { workerOnline: true, receivedAt: null, snapshot: { workerId: "local-worker", generatedAt: null, dependencies: [{ id: "opencode", label: "OpenCode", status: "ONLINE" }], services: [
     { id: "fetch", label: "mashang-fetch", group: "APPS", status: "ONLINE", managed: false, openUrl: "http://127.0.0.1:7860" },
@@ -35,7 +36,7 @@ function runtimeResponse() {
 }
 global.fetch = async (url, options = {}) => {
   calls.push({ url, options });
-  const json = url === "/api/runtime/controls" ? [] : url === "/api/runtime/control" ? { controlId: "control_1", op: "up", targetId: "fetch", status: "AWAITING_PERMISSION" } : runtimeResponse();
+  const json = url === "/api/runtime/controls" ? controlsPayload : url === "/api/runtime/control" ? { controlId: "control_1", op: "up", targetId: "fetch", status: "AWAITING_PERMISSION" } : runtimeResponse();
   return { ok: true, status: 200, json: async () => json };
 };
 
@@ -98,5 +99,24 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 const decided = calls.find((call) => call.url === "/api/runtime/controls/control_1/decision");
 assert.ok(decided, "approving must POST the decision endpoint");
 assert.deepEqual(JSON.parse(decided.options.body), { approve: true });
+
+// Recent actions: active controls stay in Control, terminal ones are capped at
+// the latest 5 and drop out after 30 minutes.
+const now = Date.now();
+const stale = 31 * 60 * 1000;
+controlsPayload = [
+  { controlId: "active-x", op: "up", targetId: "myknbase", status: "RUNNING", createdAt: now, updatedAt: now },
+  { controlId: "stale", op: "run", targetId: "oldtarget", status: "COMPLETED", createdAt: now - stale, updatedAt: now - stale },
+  ...Array.from({ length: 6 }, (_, i) => ({ controlId: `recent-${i}`, op: "run", targetId: `t${i}`, status: "COMPLETED", createdAt: now - i * 1000, updatedAt: now - i * 1000 })),
+];
+const recentUI = initRuntimeUI();
+await recentUI.refresh();
+const recentHtml = elements.get("runtimeBody").innerHTML;
+assert.match(recentHtml, /<h3>Control<\/h3>/, "active control stays in Control");
+assert.match(recentHtml, /myknbase · 启动中…/);
+assert.match(recentHtml, /Recent actions <span>5<\/span>/, "only the latest 5 terminal controls are kept");
+assert.match(recentHtml, /run · t4/);
+assert.doesNotMatch(recentHtml, /run · t5/, "the 6th terminal control is dropped");
+assert.doesNotMatch(recentHtml, /oldtarget/, "terminal controls older than 30 minutes are hidden");
 
 console.log("Runtime UI control wiring checks passed");

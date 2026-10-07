@@ -22,6 +22,8 @@ const CONTROL_STATES = {
 };
 const ACTIVE_CONTROL_STATUSES = new Set(["AWAITING_PERMISSION", "RUNNING"]);
 const OP_PROGRESS = { up: "启动中…", down: "停止中…", restart: "重启中…", run: "运行中…" };
+const RECENT_LIMIT = 5;
+const RECENT_MAX_AGE_MS = 30 * 60 * 1000;
 
 function escapeHTML(value = "") {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
@@ -72,7 +74,13 @@ export function initRuntimeUI() {
   function upsertControl(control) {
     if (!control?.controlId) return;
     const previous = controls.get(control.controlId) || {};
-    controls.set(control.controlId, { ...previous, ...control });
+    const statusChanged = control.status !== undefined && control.status !== previous.status;
+    controls.set(control.controlId, {
+      ...previous,
+      ...control,
+      createdAt: control.createdAt ?? previous.createdAt ?? Date.now(),
+      updatedAt: control.updatedAt ?? (statusChanged || previous.updatedAt === undefined ? Date.now() : previous.updatedAt),
+    });
     if (controls.size > 12) {
       const oldest = [...controls.values()].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
       if (oldest) controls.delete(oldest.controlId);
@@ -137,7 +145,12 @@ export function initRuntimeUI() {
     const sections = [];
     const controlList = [...controls.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     const activeControls = controlList.filter((control) => ACTIVE_CONTROL_STATUSES.has(control.status));
-    const recentControls = controlList.filter((control) => !ACTIVE_CONTROL_STATUSES.has(control.status));
+    const now = Date.now();
+    const recentControls = controlList
+      .filter((control) => !ACTIVE_CONTROL_STATUSES.has(control.status))
+      .filter((control) => now - (control.updatedAt ?? control.createdAt ?? 0) <= RECENT_MAX_AGE_MS)
+      .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
+      .slice(0, RECENT_LIMIT);
     const services = snapshot?.services || [];
     const dependencies = snapshot?.dependencies || [];
     const jobs = snapshot?.jobs || [];
