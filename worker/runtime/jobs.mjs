@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const LOG_LINE = /^\[([^\]]+)\]\s*(.*)$/;
@@ -6,6 +6,7 @@ const STEP_START = /^▶\s+(\S+):/;
 const STEP_RESULT = /^■\s+(\S+)\s+exit=(-?\d+)$/;
 const STEP_SKIP = /^跳过\s+(\S+?)：/;
 const DATED_LOG = /^\d{4}-\d{2}-\d{2}\.log$/;
+const JOB_STATE_DIR = "jobs";
 
 /**
  * Parse one scheduler log file and return the most recent daily-pipeline run.
@@ -94,4 +95,65 @@ export async function readDailyJob(spec) {
     if (run.status !== "UNKNOWN") return { ...run, source: join(spec.logDir, file), logDate: file.replace(/\.log$/, "") };
   }
   return { status: "UNKNOWN", reason: `no daily run found in ${spec.logDir}`, steps: [], skipped: [], source: spec.logDir };
+}
+
+function toEpoch(value) {
+  if (!value) return null;
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? null : time;
+}
+
+/**
+ * Read the last manual (`runtime.control` run) result persisted under
+ * `<stateDir>/jobs/<id>.json`. This is Worker-local state; it never crosses
+ * the Hub protocol and only feeds `lastRun`.
+ */
+export async function readManualJob(stateDir, id) {
+  if (!stateDir || !id) return null;
+  try {
+    const record = JSON.parse(await readFile(join(stateDir, JOB_STATE_DIR, `${id}.json`), "utf8"));
+    if (!record || typeof record.status !== "string") return null;
+    return {
+      status: record.status,
+      startedAt: record.startedAt ?? null,
+      finishedAt: record.finishedAt ?? null,
+      code: Number.isInteger(record.code) ? record.code : null,
+      source: JOB_STATE_DIR,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Persist a manual run record so it survives a Worker restart. */
+export async function writeManualJob(stateDir, id, record) {
+  if (!stateDir || !id) return null;
+  const stored = {
+    status: record.status,
+    startedAt: record.startedAt ?? null,
+    finishedAt: record.finishedAt ?? null,
+    code: Number.isInteger(record.code) ? record.code : null,
+  };
+  const dir = join(stateDir, JOB_STATE_DIR);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${id}.json`), `${JSON.stringify(stored, null, 2)}\n`, "utf8");
+  return stored;
+}
+
+/**
+ * Choose the most recent real execution between the scheduler-derived run and
+ * the manual run. Primary key is `startedAt`, tie-broken by `finishedAt`.
+ */
+export function pickLatestRun(scheduled, manual) {
+  if (!scheduled) return manual || null;
+  if (!manual) return scheduled;
+  const scheduledStart = toEpoch(scheduled.startedAt);
+  const manualStart = toEpoch(manual.startedAt);
+  if (scheduledStart === null && manualStart === null) return scheduled;
+  if (scheduledStart === null) return manual;
+  if (manualStart === null) return scheduled;
+  if (manualStart !== scheduledStart) return manualStart > scheduledStart ? manual : scheduled;
+  const scheduledEnd = toEpoch(scheduled.finishedAt);
+  const manualEnd = toEpoch(manual.finishedAt);
+  return (manualEnd ?? -Infinity) >= (scheduledEnd ?? -Infinity) ? manual : scheduled;
 }

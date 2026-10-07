@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { httpProbe, processProbe, isPidAlive, findProcesses } from "./probes.mjs";
-import { readDailyJob } from "./jobs.mjs";
+import { readDailyJob, readManualJob, pickLatestRun } from "./jobs.mjs";
 
 async function runServiceProbe(service, options) {
   const probe = service.probe;
@@ -76,7 +76,11 @@ export async function collectStatus(registry, options = {}) {
 
   const jobs = await Promise.all(
     registry.jobs.map(async (job) => {
-      const result = job.probe.type === "scheduler-log" ? await readDailyJob(job.probe) : { status: "UNKNOWN", reason: `unsupported probe: ${job.probe.type}` };
+      const scheduled = job.probe.type === "scheduler-log"
+        ? await readDailyJob(job.probe)
+        : { status: "UNKNOWN", reason: `unsupported probe: ${job.probe.type}`, startedAt: null, finishedAt: null };
+      const manual = await readManualJob(registry.runtimeDir, job.id);
+      const result = pickLatestRun(scheduled, manual) || scheduled;
       return {
         id: job.id,
         label: job.label,

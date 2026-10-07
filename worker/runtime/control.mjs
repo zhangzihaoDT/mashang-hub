@@ -4,6 +4,7 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { probeService } from "./status.mjs";
 import { findProcesses, isPidAlive } from "./probes.mjs";
+import { writeManualJob } from "./jobs.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -229,13 +230,31 @@ export async function restart(service, registry, options = {}) {
   return { status: started.status, down: stopped, up: started };
 }
 
-/** Run a job once with its declared canonical entry. */
+/**
+ * Run a job once with its declared canonical entry.
+ *
+ * The manual execution is persisted as Worker-local job state (`RUNNING` before
+ * spawn, then `COMPLETED`/`FAILED` after exit or cancel) so `lastRun` reflects
+ * the most recent real run regardless of its source.
+ */
 export async function run(job, registry, { log = console, signal } = {}) {
   const spec = job.control?.run;
   if (!spec) throw new Error(`job '${job.id}' has no run control declared in the registry`);
+  const stateDir = registry.runtimeDir;
+  const startedAt = new Date().toISOString();
+  await writeManualJob(stateDir, job.id, { status: "RUNNING", startedAt, finishedAt: null, code: null });
   log.log(`running job ${job.id}: ${spec.command} ${(spec.args || []).join(" ")}`.trim());
   const result = await runToCompletion(spec, { stdio: "inherit", signal });
-  if (result.aborted || signal?.aborted) return { status: "cancelled", code: result.code, job };
+  const finishedAt = new Date().toISOString();
+  const cancelled = result.aborted || signal?.aborted;
+  const succeeded = !cancelled && result.code === 0;
+  await writeManualJob(stateDir, job.id, {
+    status: succeeded ? "COMPLETED" : "FAILED",
+    startedAt,
+    finishedAt,
+    code: result.code ?? null,
+  });
+  if (cancelled) return { status: "cancelled", code: result.code, job };
   return { status: result.code === 0 ? "completed" : "failed", code: result.code, signal: result.signal, job };
 }
 
