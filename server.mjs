@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { hasResult } from "./server/result-contract.mjs";
 import { sanitizeRuntimeSnapshot } from "./server/runtime-contract.mjs";
+import { isValidControlOp, isTerminalControl, controlTimeoutConfig, sanitizeControlResult } from "./server/runtime-control.mjs";
 import { createTurn, appendEvent, updateTurn, finalizeTurn, getTurn } from "./server/task-log.mjs";
 import { timeoutConfig, isTerminal, REASONS } from "./server/task-timeout.mjs";
 
@@ -26,6 +27,7 @@ let activeWorker = null;
 let runtimeSnapshot = null;
 let runtimeReceivedAt = null;
 let runtimeSnapshotSequence = 0;
+const controls = new Map();
 
 function json(res, status, data, headers = {}) { res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...headers }); res.end(JSON.stringify(data)); }
 async function body(req) { let value = ""; for await (const chunk of req) value += chunk; return value ? JSON.parse(value) : {}; }
@@ -53,6 +55,31 @@ function finalizeTask(task, { event, status, reason, error }) {
   else if (event === "task.cancelled") console.log(`task cancelled: ${task.taskId} reason=${reason}`);
   else console.log(`task settled: ${task.taskId} ${status} reason=${reason || "none"}`);
   return true;
+}
+
+function publicControl(control) { return { controlId: control.controlId, op: control.op, targetId: control.targetId, status: control.status, reason: control.reason, code: control.code, createdAt: control.createdAt, updatedAt: control.updatedAt }; }
+function broadcastControl(control) { broadcast({ type: "runtime.control.updated", controlId: control.controlId, op: control.op, targetId: control.targetId, status: control.status, reason: control.reason, code: control.code }); }
+function clearControlTimers(control) { clearTimeout(control.timers.soft); clearTimeout(control.timers.hard); clearTimeout(control.timers.cancel); control.timers.soft = control.timers.hard = control.timers.cancel = null; }
+function finalizeControl(control, status, reason, code = null) {
+  if (isTerminalControl(control.status)) return false;
+  control.status = status;
+  control.reason = reason || null;
+  control.code = code;
+  control.updatedAt = Date.now();
+  clearControlTimers(control);
+  broadcastControl(control);
+  console.log(`control settled: ${control.controlId} ${status} reason=${reason || "none"}`);
+  return true;
+}
+function scheduleControlWatchdog(control) {
+  const config = controlTimeoutConfig();
+  control.timers.soft = setTimeout(() => onControlSoftTimeout(control), config.requestMs);
+}
+function onControlSoftTimeout(control) {
+  if (isTerminalControl(control.status)) return;
+  console.log(`control timeout warning: ${control.controlId}`);
+  sendWorker({ type: "runtime.control.cancel", controlId: control.controlId, source: "timeout" });
+  control.timers.hard = setTimeout(() => { if (!isTerminalControl(control.status)) finalizeControl(control, "TIMEOUT", "CONTROL_TIMEOUT"); }, controlTimeoutConfig().graceMs);
 }
 
 function scheduleWatchdog(task) {
@@ -121,6 +148,13 @@ function onWorkerMessage(message) {
     runtimeSnapshot = snapshot;
     runtimeReceivedAt = new Date().toISOString();
     broadcast({ type: "runtime.snapshot", workerOnline: Boolean(activeWorker), receivedAt: runtimeReceivedAt, snapshot });
+    return;
+  }
+  if (message.type === "runtime.control.result") {
+    const control = controls.get(message.controlId);
+    if (!control) return;
+    const { status, reason, code } = sanitizeControlResult(message);
+    finalizeControl(control, status, reason, code);
     return;
   }
   if (message.type === "worker.status") { workerStatus(message.status, message); return; }
@@ -245,6 +279,50 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/api/health") return json(res, 200, { connected: Boolean(activeWorker), worker: activeWorker ? { id: activeWorker.workerId, status: workers.get(activeWorker.workerId)?.status || "CONNECTING" } : null });
   if (url.pathname === "/api/worker") return json(res, 200, { worker: activeWorker ? { id: activeWorker.workerId, status: workers.get(activeWorker.workerId)?.status || "CONNECTING" } : null });
   if (url.pathname === "/api/runtime") return json(res, 200, { workerOnline: Boolean(activeWorker), receivedAt: runtimeReceivedAt, snapshot: runtimeSnapshot });
+  if (url.pathname === "/api/runtime/control" && req.method === "POST") {
+    const input = await body(req);
+    const op = String(input.op || "");
+    const targetId = String(input.targetId || "");
+    if (!isValidControlOp(op) || !targetId) return json(res, 400, { error: "Invalid op or targetId" });
+    if (!activeWorker || activeWorker.readyState !== 1) return json(res, 503, { error: "Mac Worker is offline" });
+    const control = { controlId: `control_${randomUUID()}`, op, targetId, status: "AWAITING_PERMISSION", reason: null, code: null, timers: {}, createdAt: Date.now(), updatedAt: Date.now() };
+    controls.set(control.controlId, control);
+    console.log(`control created: ${control.controlId} op=${op} target=${targetId}`);
+    broadcast({ type: "runtime.control.requested", ...publicControl(control) });
+    broadcast({ type: "runtime.control.permission.requested", controlId: control.controlId, op, targetId });
+    return json(res, 202, publicControl(control));
+  }
+  if (url.pathname === "/api/runtime/controls" && req.method === "GET") return json(res, 200, [...controls.values()].map(publicControl));
+  const controlDecision = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)\/decision$/);
+  if (controlDecision && req.method === "POST") {
+    const control = controls.get(controlDecision[1]);
+    if (!control) return json(res, 404, { error: "Control not found" });
+    if (control.status !== "AWAITING_PERMISSION") return json(res, 409, { error: "Control already decided", status: control.status });
+    const approved = Boolean((await body(req)).approve);
+    if (!approved) { finalizeControl(control, "REJECTED", "USER_REJECTED"); return json(res, 200, publicControl(control)); }
+    control.status = "RUNNING";
+    control.updatedAt = Date.now();
+    const dispatched = sendWorker({ type: "runtime.control.request", controlId: control.controlId, op: control.op, targetId: control.targetId });
+    broadcastControl(control);
+    console.log(`control approved: ${control.controlId} op=${control.op} target=${control.targetId}`);
+    if (!dispatched) { finalizeControl(control, "FAILED", "WORKER_OFFLINE"); return json(res, 200, publicControl(control)); }
+    scheduleControlWatchdog(control);
+    return json(res, 200, publicControl(control));
+  }
+  const controlCancel = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)\/cancel$/);
+  if (controlCancel && req.method === "POST") {
+    const control = controls.get(controlCancel[1]);
+    if (!control) return json(res, 404, { error: "Control not found" });
+    if (isTerminalControl(control.status)) return json(res, 409, { error: "Control already settled", status: control.status });
+    if (control.status === "AWAITING_PERMISSION") { finalizeControl(control, "CANCELLED", "USER_CANCELLED"); return json(res, 202, publicControl(control)); }
+    console.log(`control cancel requested: ${control.controlId}`);
+    sendWorker({ type: "runtime.control.cancel", controlId: control.controlId, source: "user" });
+    clearTimeout(control.timers.hard);
+    control.timers.cancel = setTimeout(() => { if (!isTerminalControl(control.status)) finalizeControl(control, "CANCELLED", "USER_CANCELLED"); }, controlTimeoutConfig().graceMs);
+    return json(res, 202, publicControl(control));
+  }
+  const controlGet = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)$/);
+  if (controlGet && req.method === "GET") { const control = controls.get(controlGet[1]); return control ? json(res, 200, publicControl(control)) : json(res, 404, { error: "Control not found" }); }
   if (url.pathname === "/api/models") return json(res, 200, { models: activeWorker?.models || [] });
   if (url.pathname === "/api/events") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive" }); browserEvents.add(res); res.write(`event: mashang\ndata: ${JSON.stringify({ type: "worker.status", status: activeWorker ? "ONLINE" : "OFFLINE" })}\n\n`); req.on("close", () => browserEvents.delete(res)); return;
@@ -307,6 +385,7 @@ wss.on("connection", (ws) => {
     if (activeWorker !== ws) return;
     activeWorker = null;
     for (const task of tasks.values()) if (!isTerminal(task.status)) finalizeTask(task, { event: "task.interrupted", status: "INTERRUPTED", reason: REASONS.WORKER_DISCONNECTED, error: "Mac Worker disconnected" });
+    for (const control of controls.values()) if (!isTerminalControl(control.status)) finalizeControl(control, "FAILED", "WORKER_DISCONNECTED");
     workerStatus("OFFLINE");
     broadcast({ type: "runtime.snapshot", workerOnline: false, receivedAt: runtimeReceivedAt, snapshot: runtimeSnapshot });
   });

@@ -1,4 +1,5 @@
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, extname, relative, resolve } from "node:path";
@@ -6,6 +7,7 @@ import { WebSocket } from "ws";
 import { isAllowedArtifactPath } from "./artifact-policy.mjs";
 import { buildRegistry } from "./runtime/registry.mjs";
 import { buildRuntimeSnapshot } from "./runtime/protocol.mjs";
+import { executeControl } from "./runtime/control.mjs";
 import { timeoutConfig } from "../server/task-timeout.mjs";
 
 const hubURL = process.env.HUB_URL;
@@ -25,15 +27,26 @@ let socket;
 let eventReader;
 let listening = false;
 let busy = 0;
-const runtimeRegistry = buildRegistry(process.env);
+const runtimeRegistry = buildRegistry(process.env, loadRuntimeConfig(process.env.MASHANG_RUNTIME_CONFIG));
 const runtimeSnapshotMs = Number(process.env.RUNTIME_SNAPSHOT_INTERVAL_MS || 30000);
 let runtimeSequence = 0;
 let runtimePublishing = false;
+const activeControls = new Map();
 
 if (!hubURL || !workerSecret || !projectRoot) { console.error("HUB_URL, WORKER_SECRET and MASHANG_SERVICE_ROOT are required"); process.exit(1); }
 
 const { requestMs, graceMs } = timeoutConfig();
 const safetyAbortMs = requestMs + graceMs;
+
+function loadRuntimeConfig(path) {
+  if (!path) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    console.error(`warning: could not read MASHANG_RUNTIME_CONFIG (${path}): ${error.message}`);
+    return null;
+  }
+}
 
 async function loadMappings() { try { const data = JSON.parse(await readFile(stateFile, "utf8")); for (const [hubSessionId, openCodeSessionId] of Object.entries(data.mappings || {})) mappings.set(hubSessionId, openCodeSessionId); } catch { /* First run has no mapping file. */ } }
 async function saveMappings() { try { await mkdir(dirname(stateFile), { recursive: true }); } catch { /* Parent may already exist. */ } try { await writeFile(stateFile, JSON.stringify({ mappings: Object.fromEntries(mappings) }, null, 2), "utf8"); } catch { /* Mapping persistence is best effort. */ } }
@@ -159,11 +172,30 @@ async function publishRuntimeSnapshot() {
     runtimePublishing = false;
   }
 }
+async function handleControlRequest(message) {
+  const controller = new AbortController();
+  activeControls.set(message.controlId, controller);
+  console.log(`control received: ${message.controlId} op=${message.op} target=${message.targetId}`);
+  try {
+    const result = await executeControl(runtimeRegistry, { op: message.op, targetId: message.targetId, signal: controller.signal });
+    send({ type: "runtime.control.result", controlId: message.controlId, status: result.status, reason: result.reason, code: result.code ?? null });
+    console.log(`control result sent: ${message.controlId} status=${result.status} reason=${result.reason}`);
+  } catch (error) {
+    send({ type: "runtime.control.result", controlId: message.controlId, status: "FAILED", reason: "EXEC_ERROR", code: null });
+    console.log(`control error: ${message.controlId} ${error.message}`);
+  } finally {
+    activeControls.delete(message.controlId);
+  }
+}
+function handleControlCancel(message) {
+  const controller = activeControls.get(message.controlId);
+  if (controller) controller.abort();
+}
 async function register() { runtimeSequence = 0; await publishRegistration(); listenOpenCodeEvents(); publishRuntimeSnapshot(); }
 function connect() {
   const url = new URL(hubURL); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = "/worker";
   socket = new WebSocket(url, { headers: { Authorization: `Bearer ${workerSecret}` } });
-  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "permission.reply") openCode(`/permission/${encodeURIComponent(message.requestId)}/reply`, { method: "POST", body: JSON.stringify({ response: message.response }) }).catch(() => {}); } catch { /* Keep worker alive on malformed control messages. */ } });
+  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") openCode(`/permission/${encodeURIComponent(message.requestId)}/reply`, { method: "POST", body: JSON.stringify({ response: message.response }) }).catch(() => {}); } catch { /* Keep worker alive on malformed control messages. */ } });
   socket.on("close", () => setTimeout(connect, 2000)); socket.on("error", () => socket.close());
 }
 await loadMappings(); setInterval(heartbeat, heartbeatMs); setInterval(publishRuntimeSnapshot, runtimeSnapshotMs); connect();

@@ -78,7 +78,65 @@ Hub 收到快照后按白名单清洗字段、校验枚举并限制条目数量�
 - Worker 断开后保留最后一份快照，`workerOnline` 变为 `false`。
 - 有效更新同时进入现有 SSE 广播流（事件 `type: "runtime.snapshot"`）。
 
+## 控制：`runtime.control`（V1）
+
+控制是独立于状态快照的请求/终态语义。Hub 只传递通用的 `op` 与 `targetId`，不解释目标是什么。所有控制动作都是副作用操作，必须经过 Hub 的 Permission 门禁后才下发到 Worker。
+
+操作集：`up` | `down` | `restart` | `run`（均为小写）。
+
+### 生命周期
+
+```text
+AWAITING_PERMISSION ──approve──▶ RUNNING ──worker result──▶ COMPLETED / FAILED / REFUSED
+        │                            └──timeout/cancel────▶ TIMEOUT / CANCELLED
+        └──reject──────────────────────────────────────────▶ REJECTED
+```
+
+终态：`COMPLETED` | `FAILED` | `REFUSED` | `REJECTED` | `TIMEOUT` | `CANCELLED`。
+
+### Hub HTTP 接口（需登录）
+
+`POST /api/runtime/control`：
+
+```json
+{ "op": "up", "targetId": "scheduler" }
+```
+
+→ `202 { "controlId": "control_...", "op": "up", "targetId": "scheduler", "status": "AWAITING_PERMISSION", "reason": null, "code": null, "createdAt": 0, "updatedAt": 0 }`
+
+`POST /api/runtime/controls/:id/decision`：`{ "approve": true }`
+`POST /api/runtime/controls/:id/cancel`
+`GET /api/runtime/controls` / `GET /api/runtime/controls/:id`
+
+### Hub → Worker 消息
+
+```json
+{ "type": "runtime.control.request", "controlId": "control_...", "op": "up", "targetId": "scheduler" }
+{ "type": "runtime.control.cancel", "controlId": "control_...", "source": "user" }
+```
+
+### Worker → Hub 消息
+
+```json
+{ "type": "runtime.control.result", "controlId": "control_...", "status": "COMPLETED", "reason": "OK", "code": null }
+```
+
+- `status` ∈ `COMPLETED` | `FAILED` | `REFUSED` | `CANCELLED`。
+- `reason` 是**稳定、业务无关**的机器码（如 `OK`、`UNKNOWN_TARGET`、`UNKNOWN_OP`、`JOB_FAILED`、`EXEC_FAILED`、`UNVERIFIED`、`REFUSED`、`CANCELLED`）；不携带本地路径、命令或原始错误文本。
+- `code` 为可选的子进程退出码。
+
+### Hub SSE 事件
+
+- `runtime.control.permission.requested` `{ controlId, op, targetId }` — 需要用户决定。
+- `runtime.control.updated` `{ controlId, op, targetId, status, reason, code }` — 每次状态变化（含终态）。
+
+### 超时与取消
+
+- Hub 在批准并下发后启动看门狗：`CONTROL_TIMEOUT_MS`（默认 300000）后软超时，向 Worker 发送 `runtime.control.cancel`；再过 `CONTROL_CANCEL_GRACE_MS`（默认 10000）强制终态 `TIMEOUT`。
+- 用户取消走 `POST /api/runtime/controls/:id/cancel`；先到者生效，若 Worker 已返回终态则不再回退。
+- Worker 断开时，所有非终态控制被判定为 `FAILED`（`WORKER_DISCONNECTED`）。
+
 ## 演进
 
-- 控制类动作（`up` / `down` / `restart` / `run`）留待后续版本，应以通用 `runtime.control` 请求 + 终态结果 + Permission 门禁单独定义，不复用本快照语义。
 - `protocolVersion` 变更时，Hub 与 Worker 需能同时表达旧、新版本；当前只支持 `1`。
+- Hub UI 只读阶段不包含控制按钮；控制闭环先以 HTTP 接口与协议实现。
