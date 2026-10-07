@@ -229,3 +229,52 @@ docker.io/byte1717712/mashang-hub:latest
 ```
 
 镜像目标平台 `linux/amd64`，Sealos 正式环境指向该镜像。
+
+## 2026-10-07 · V0.5 Runtime Operation Contract
+
+### Worker 声明通用 operation，Hub 只消费 metadata/status
+
+把原先由 Hub「认识」的 `daily` job 迁移为 Worker 侧的通用 operation，`daily` 与全量更新（`allupdate`）作为首批迁移对象。Hub 不再按 operation ID 分支，也不新增任何 `mashang-service` 专用命令映射。
+
+```text
+Worker registry (Service/Worker 侧)
+  → runtime.snapshot.operations[]  (metadata + status)
+  → Hub 白名单校验，通用渲染 / 授权 / 取消
+  → runtime.control run <opaque-id>
+  → Worker 执行，回传通用 status + reason
+```
+
+### 本里程碑完成的能力
+
+- 修复 Daily 状态识别：同时识别当前 `refresh_daily` 与历史 `refresh_full`，并补回归测试。
+- 新增 Worker-side generic operation contract：
+  - metadata：`id`、`label`、`group`、`description`、`enabled`、`cancellationSupported`、`timeoutMs`。
+  - status：`IDLE`、`RUNNING`、`COMPLETED`、`FAILED`、`CANCELLED`，附运行时间与简短安全摘要。
+- 操作状态持久化在 Worker 本地，Worker 重启后可回读。
+- 复用既有 Permission 门禁、看门狗、取消与终态语义；operation 可声明建议超时，Hub 全局配置仍可覆盖且设有上限。
+- `daily` 与 `allupdate` 迁移为 operation；`allupdate` 支持手动触发，并展示本地写入副作用说明。
+- Hub 抽屉按通用 metadata/status 渲染 operation；测试用一个新增无参数 operation 验证无需改动 Hub。
+
+### 验收标准
+
+```text
+mashang-service 新增一个无参数 operation：
+只修改 Service/Worker，无需修改 Hub 命令映射或业务逻辑。
+```
+
+### 发布记录
+
+Git：
+
+```text
+Add generic runtime operation contract: 73d3001
+```
+
+Docker：
+
+```text
+docker.io/byte1717712/mashang-hub:0.2.6
+docker.io/byte1717712/mashang-hub:latest
+```
+
+镜像目标平台 `linux/amd64`，Sealos 正式环境指向该镜像。
