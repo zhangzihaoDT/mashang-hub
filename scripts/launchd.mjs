@@ -285,7 +285,14 @@ export function statusLaunchAgents({ home = homedir(), uid = process.getuid?.(),
       continue;
     }
     const details = launchctl(["print", `${domain}/${service.label}`], { quiet: true });
-    output(details ? `${service.key}: loaded\n${details.trim()}` : `${service.key}: installed but not loaded`);
+    if (!details) {
+      output(`${service.key}: installed but not loaded`);
+      continue;
+    }
+    const state = details.match(/^\s*state = ([^\r\n]+)/m)?.[1] || "loaded";
+    const pid = details.match(/^\s*pid = (\d+)/m)?.[1];
+    const lastExit = details.match(/^\s*last exit code = (-?\d+)/m)?.[1];
+    output(`${service.key}: ${state}${pid ? ` (pid ${pid})` : ""}${lastExit ? ` · last exit ${lastExit}` : ""}`);
   }
 }
 

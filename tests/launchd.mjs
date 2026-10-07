@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildLaunchdAgents, LAUNCHD_SERVICES, renderPlist } from "../scripts/launchd.mjs";
+import { buildLaunchdAgents, LAUNCHD_SERVICES, renderPlist, statusLaunchAgents } from "../scripts/launchd.mjs";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -51,6 +51,25 @@ assert.throws(() => buildLaunchdAgents({ root, home, env: { ...env, OPENCODE_POR
 
 const tempDir = await mkdtemp(join(tmpdir(), "mashang-launchd-smoke-"));
 try {
+  const statusHome = join(tempDir, "status-home");
+  const launchAgentsDir = join(statusHome, "Library/LaunchAgents");
+  await mkdir(launchAgentsDir, { recursive: true });
+  for (const service of LAUNCHD_SERVICES) await writeFile(join(launchAgentsDir, service.plist), "", "utf8");
+  const noisyLaunchctl = join(tempDir, "launchctl-noisy");
+  await writeFile(noisyLaunchctl, '#!/bin/sh\nprintf "state = running\\npid = 4321\\nWORKER_SECRET = fake-status-secret\\n"\n', "utf8");
+  await chmod(noisyLaunchctl, 0o700);
+  const previousLaunchctl = process.env.LAUNCHCTL_BIN;
+  const statusLines = [];
+  try {
+    process.env.LAUNCHCTL_BIN = noisyLaunchctl;
+    statusLaunchAgents({ home: statusHome, uid: 501, platform: "darwin", output: (line) => statusLines.push(line) });
+  } finally {
+    if (previousLaunchctl === undefined) delete process.env.LAUNCHCTL_BIN;
+    else process.env.LAUNCHCTL_BIN = previousLaunchctl;
+  }
+  assert.deepEqual(statusLines, ["opencode: running (pid 4321)", "worker: running (pid 4321)"]);
+  assert.equal(statusLines.join("\n").includes("fake-status-secret"), false, "launchd status must not print environment secrets");
+
   const fakeLaunchctl = join(tempDir, "launchctl");
   await writeFile(fakeLaunchctl, '#!/bin/sh\ncase "$2" in gui/*/com.mashang-hub.worker) exit 0;; esac\nexit 1\n', "utf8");
   await chmod(fakeLaunchctl, 0o700);
