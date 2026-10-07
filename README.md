@@ -83,21 +83,33 @@ npm run worker
 
 Open <http://localhost:3000>. For user authentication, also set `HUB_ACCESS_TOKEN`; the UI will show a login page. Without it, local development has no user login gate.
 
-## Runtime Manager (read-only)
+## Runtime Manager (V0.3 Local Control)
 
-The Mac Worker side carries a small services/jobs registry and a read-only `mashang status` command. It reports the online state of `mashang-fetch`, `myknbase`, `OpenCode`, the Worker process and the `mashang-service` scheduler, plus the latest `daily pipeline` result parsed from `logs/scheduler/YYYY-MM-DD.log`.
+The Mac Worker side carries a services/jobs registry and a small `mashang` CLI. The registry declares the state probes, the log sources and the **current canonical entry** (`start` / `stop` / `run`) for every service and job. The manager only executes what the registry declares, then verifies the result; it does not contain business logic.
 
 ```bash
-npm link                 # once, exposes the `mashang` command
-mashang status           # human-readable
-mashang status --json    # machine-readable
-mashang status --strict  # exit 1 if any service is offline or the daily job failed
-mashang logs             # list registered log sources
-mashang logs worker      # tail one source (worker, scheduler, daily, fetch, opencode)
-mashang logs daily --follow
+npm link                   # once, exposes the `mashang` command
+mashang status             # online/offline per service + latest daily-pipeline result
+mashang status --json
+mashang status --strict    # exit 1 if any service is offline or the daily job failed
+
+mashang up <service>       # start via the canonical entry, then verify online
+mashang down <service>     # stop the managed instance / declared stop entry, then verify
+mashang restart <service>
+mashang run <job>          # run a job once via its canonical entry
+
+mashang logs [id] [--lines N] [--follow] [--all] [--json]
 ```
 
-Without linking, use `npm run mashang -- status` or `node worker/mashang.mjs status`. The registry lives in `worker/runtime/registry.mjs` and is data, not business logic: targets come from `MASHANG_SERVICE_ROOT`, `MASHANG_HUB_ROOT`, `MASHANG_FETCH_ROOT`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MYKNBASE_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override. V0.1 is read-only — it never starts or stops a service.
+Services: `fetch`, `myknbase`, `opencode`, `worker`, `scheduler`. Jobs: `daily`.
+
+Safety model:
+
+- The registry records one canonical entry per service. The scheduler registers `caffeinate -i make sales-scheduler` only — retired scripts (e.g. `schedule_launch_lock_evening_updates`) are listed as `legacy` and are never treated as a valid online service.
+- `up` is a no-op when the canonical process is already running, so a stale process is never "re-legitimized". If only a legacy process exists, `up` warns and starts the canonical entry; `down` refuses to stop legacy-only processes.
+- Instances started by `mashang` are tracked under `MASHANG_RUNTIME_DIR` (default `<hub>/.local/runtime/`) and stopped by process group. `status` marks untracked running instances as `(unmanaged)`.
+
+Without linking, use `node worker/mashang.mjs <command>`. Configure via `MASHANG_SERVICE_ROOT`, `MASHANG_HUB_ROOT`, `MASHANG_FETCH_ROOT`, `MYKNBASE_ROOT`, `MASHANG_RUNTIME_DIR`, `MASHANG_SCHEDULER_SERIES`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MYKNBASE_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override. Hub UI is not involved yet.
 
 ## Production Environment
 

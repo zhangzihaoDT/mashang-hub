@@ -14,11 +14,21 @@ function truncate(text, width = 72) {
   return chars.length > width ? `${chars.slice(0, width - 1).join("")}…` : String(text);
 }
 
+function serviceLabel(service) {
+  if (!service.online) return red("offline");
+  return service.managed ? green("online ") : yellow("online ");
+}
+
 function serviceLine(service) {
   const dot = service.online ? green("●") : red("○");
-  const state = service.online ? green("online ") : red("offline");
   const raw = service.latencyMs != null ? `${service.detail} · ${service.latencyMs}ms` : service.detail;
-  return `  ${dot} ${pad(service.label, 26)} ${state}  ${dim(truncate(raw))}`;
+  const suffix = service.online && !service.managed ? dim(" (unmanaged)") : "";
+  return `  ${dot} ${pad(service.label, 26)} ${serviceLabel(service)}  ${dim(truncate(raw))}${suffix}`;
+}
+
+function legacyLine(service) {
+  const list = service.legacy.map((entry) => `pid ${entry.pid}`).join(", ");
+  return `      ${red("⚠ legacy")} ${service.id}: ${list} ${dim("(not treated as a valid service)")}`;
 }
 
 function jobLine(job) {
@@ -32,7 +42,10 @@ function jobLine(job) {
 
 export function renderText(status) {
   const lines = [`mashang runtime status  ${dim(status.checkedAt)}`, "", "SERVICES"];
-  for (const service of status.services) lines.push(serviceLine(service));
+  for (const service of status.services) {
+    lines.push(serviceLine(service));
+    if (service.legacy?.length) lines.push(legacyLine(service));
+  }
   lines.push("", "JOBS");
   for (const job of status.jobs) lines.push(jobLine(job));
   return `${lines.join("\n")}\n`;

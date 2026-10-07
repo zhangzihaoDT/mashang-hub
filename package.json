@@ -24,7 +24,7 @@
     "test:artifact-policy": "node tests/artifact-policy.mjs",
     "test:task-timeout": "node tests/task-timeout.mjs",
     "test:task-log": "node tests/task-log.mjs",
-    "test:runtime": "node tests/runtime-registry.mjs && node tests/runtime-jobs.mjs && node tests/runtime-logs.mjs",
+    "test:runtime": "node tests/runtime-registry.mjs && node tests/runtime-jobs.mjs && node tests/runtime-logs.mjs && node tests/runtime-control.mjs",
     "test": "npm run test:dom && npm run test:task-state && npm run test:task-timeout && npm run test:task-log && npm run test:artifact && npm run test:artifact-policy && npm run test:result-contract && npm run test:runtime"
   },
   "engines": {

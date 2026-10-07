@@ -9,13 +9,32 @@ function shortError(error) {
   return message.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
-async function pidAlive(pid) {
+export async function isPidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
     return error?.code === "EPERM";
+  }
+}
+
+/** Return every process whose full command matches `pattern` (pgrep -f). */
+export async function findProcesses(pattern) {
+  if (!pattern) return [];
+  try {
+    const { stdout } = await execFileAsync("pgrep", ["-fl", pattern]);
+    return stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const match = line.match(/^(\d+)\s+(.*)$/);
+        return match ? { pid: Number(match[1]), command: match[2] } : null;
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
   }
 }
 
@@ -28,9 +47,9 @@ export async function httpProbe(spec, { timeoutMs = 2500 } = {}) {
       signal: AbortSignal.timeout(timeoutMs),
       headers: { accept: "application/json, text/plain, */*" },
     });
-    return { online: response.status < 500, detail: `HTTP ${response.status}`, latencyMs: Date.now() - startedAt, url: spec.url };
+    return { online: response.status < 500, detail: `HTTP ${response.status}`, latencyMs: Date.now() - startedAt, url: spec.url, pid: null };
   } catch (error) {
-    return { online: false, detail: shortError(error), latencyMs: Date.now() - startedAt, url: spec.url };
+    return { online: false, detail: shortError(error), latencyMs: Date.now() - startedAt, url: spec.url, pid: null };
   }
 }
 
@@ -38,23 +57,14 @@ export async function processProbe(spec) {
   if (spec.pidFile) {
     try {
       const pid = Number((await readFile(spec.pidFile, "utf8")).trim());
-      if (await pidAlive(pid)) return { online: true, detail: `pid ${pid}`, pid };
+      if (await isPidAlive(pid)) return { online: true, detail: `pid ${pid}`, pid };
     } catch {
-      /* Fall through to pattern matching. */
+      /* Fall through to signature matching. */
     }
   }
-  if (spec.match) {
-    try {
-      const { stdout } = await execFileAsync("pgrep", ["-fl", spec.match]);
-      const line = stdout.split("\n").map((entry) => entry.trim()).filter(Boolean)[0];
-      if (line) {
-        const pid = Number(line.split(/\s+/)[0]);
-        return { online: true, detail: line, pid: Number.isInteger(pid) ? pid : null };
-      }
-    } catch {
-      /* pgrep exits non-zero when nothing matches. */
-    }
-    return { online: false, detail: "process not running" };
+  const matches = await findProcesses(spec.match);
+  if (matches.length) {
+    return { online: true, detail: matches[0].command, pid: matches[0].pid, pids: matches.map((entry) => entry.pid) };
   }
-  return { online: false, detail: "no probe configured" };
+  return { online: false, detail: "process not running", pid: null, pids: [] };
 }

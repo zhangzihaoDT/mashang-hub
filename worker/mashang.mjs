@@ -4,28 +4,36 @@ import { buildRegistry } from "./runtime/registry.mjs";
 import { collectStatus } from "./runtime/status.mjs";
 import { renderText } from "./runtime/render.mjs";
 import { listLogSources, readTail, followFile } from "./runtime/logs.mjs";
+import { up, down, restart, run, findService, findJob } from "./runtime/control.mjs";
 
-const USAGE = `mashang — local runtime manager (read-only)
+const USAGE = `mashang — local runtime manager
 
 Usage:
   mashang status [--json] [--strict]
+  mashang up <service>
+  mashang down <service>
+  mashang restart <service>
+  mashang run <job>
   mashang logs [id] [--lines N] [--follow] [--all] [--json]
   mashang help
 
-  logs without id lists registered log sources; with an id (e.g. worker,
-  scheduler, daily, fetch, opencode) it prints the tail of that source.
+  Services and jobs are declared by the registry; the manager only executes
+  the declared canonical entry and verifies the result.
 
 Environment:
   MASHANG_SERVICE_ROOT   mashang-service checkout (scheduler logs)
   MASHANG_HUB_ROOT       mashang-hub checkout (worker pid file, hub logs)
-  MASHANG_FETCH_ROOT     mashang-fetch checkout (app log)
+  MASHANG_FETCH_ROOT     mashang-fetch checkout (app log, dev.sh)
+  MYKNBASE_ROOT          myknbase checkout
+  MASHANG_RUNTIME_DIR    managed records + start logs (default <hub>/.local/runtime)
+  MASHANG_SCHEDULER_SERIES  optional SERIES passed to the scheduler/daily job
   OPENCODE_URL           default http://127.0.0.1:4096
   MASHANG_FETCH_URL      default http://127.0.0.1:7860
   MYKNBASE_URL           default http://127.0.0.1:7870
+  HUB_URL                worker registration target (default ws://127.0.0.1:3000)
   MASHANG_RUNTIME_CONFIG path to a JSON {services,jobs} override
   RUNTIME_PROBE_TIMEOUT_MS  per-probe timeout, default 2500
-
-V0.1 is read-only: it reports state and never starts or stops anything.
+  RUNTIME_CONTROL_VERIFY_MS post-action verification window, default 15000
 `;
 
 function parseArgs(args) {
@@ -69,6 +77,75 @@ async function commandStatus(rawArgs, env) {
     const serviceDown = status.services.some((service) => !service.online);
     const jobFailed = status.jobs.some((job) => job.status === "FAILED");
     if (serviceDown || jobFailed) process.exitCode = 1;
+  }
+}
+
+const CONTROL_LOGGER = { log: (message) => console.log(message), warn: (message) => console.warn(message) };
+
+function describeControl(kind, id, result) {
+  if (kind === "restart") {
+    const downPart = describeControl("down", id, result.down);
+    const upPart = result.up ? describeControl("up", id, result.up) : "";
+    return `${downPart}${upPart}`;
+  }
+  const messages = {
+    "already-running": `service ${id} already running (${result.managed ? "managed" : "unmanaged"})`,
+    started: `service ${id} is online`,
+    unverified: `service ${id} action did not reach the expected state`,
+    "start-failed": `service ${id} failed to start (exit ${result.code})`,
+    "already-stopped": `service ${id} already stopped`,
+    stopped: `service ${id} is offline`,
+    "stop-failed": `service ${id} failed to stop (exit ${result.code})`,
+    refused: `service ${id} refused: ${result.reason}`,
+  };
+  return `${messages[result.status] || `service ${id} ${result.status}`}\n`;
+}
+
+async function commandControl(kind, rawArgs, env) {
+  const args = parseArgs(rawArgs);
+  const id = args._[0];
+  if (!id) {
+    process.stderr.write(`usage: mashang ${kind} <${kind === "run" ? "job" : "service"}>\n`);
+    process.exitCode = 2;
+    return;
+  }
+  const registry = buildRegistry(env, await loadConfig(env));
+
+  if (kind === "run") {
+    const job = findJob(registry, id);
+    if (!job) {
+      process.stderr.write(`unknown job: ${id}\n`);
+      process.exitCode = 2;
+      return;
+    }
+    try {
+      const result = await run(job, registry, { log: CONTROL_LOGGER });
+      process.stdout.write(`job ${id} ${result.status} (exit ${result.code})\n`);
+      process.exitCode = result.status === "completed" ? 0 : 1;
+    } catch (error) {
+      process.stderr.write(`${error.message}\n`);
+      process.exitCode = 2;
+    }
+    return;
+  }
+
+  const service = findService(registry, id);
+  if (!service) {
+    process.stderr.write(`unknown service: ${id}\navailable: ${registry.services.map((s) => s.id).join(", ")}\n`);
+    process.exitCode = 2;
+    return;
+  }
+  try {
+    const result = kind === "up"
+      ? await up(service, registry, { log: CONTROL_LOGGER })
+      : kind === "down"
+        ? await down(service, registry, { log: CONTROL_LOGGER })
+        : await restart(service, registry, { log: CONTROL_LOGGER });
+    process.stdout.write(describeControl(kind, id, result));
+    process.exitCode = ["started", "already-running", "stopped", "already-stopped"].includes(result.status) ? 0 : 1;
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 2;
   }
 }
 
@@ -143,6 +220,7 @@ async function commandLogs(rawArgs, env) {
 async function main() {
   const [command = "help", ...args] = process.argv.slice(2);
   if (command === "status") return commandStatus(args, process.env);
+  if (command === "up" || command === "down" || command === "restart" || command === "run") return commandControl(command, args, process.env);
   if (command === "logs") return commandLogs(args, process.env);
   if (command === "help" || command === "--help" || command === "-h") {
     process.stdout.write(USAGE);

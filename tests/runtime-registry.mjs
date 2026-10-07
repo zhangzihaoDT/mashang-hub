@@ -30,6 +30,28 @@ assert.equal(registry.services.find((s) => s.id === "scheduler").logs[0].path, "
 assert.ok(registry.services.find((s) => s.id === "fetch").logs[0].path.endsWith(".local/app.log"));
 assert.equal(registry.jobs[0].logs[0].dir, "/tmp/svc/logs/scheduler");
 
+const scheduler = registry.services.find((s) => s.id === "scheduler");
+assert.equal(scheduler.match, "utility_scripts/sales_scheduler.py");
+assert.deepEqual(scheduler.legacy, ["schedule_launch_lock_evening_updates"]);
+assert.equal(scheduler.control.start.command, "caffeinate");
+assert.deepEqual(scheduler.control.start.args, ["-i", "make", "sales-scheduler"]);
+assert.equal(scheduler.control.start.detach, true);
+assert.equal(scheduler.control.start.cwd, "/tmp/svc");
+
+const fetchControl = registry.services.find((s) => s.id === "fetch").control;
+assert.equal(fetchControl.start.detach, false);
+assert.equal(fetchControl.start.command, "./scripts/dev.sh");
+assert.deepEqual(fetchControl.stop, { command: "./scripts/dev.sh", args: ["stop"], cwd: fetchControl.start.cwd });
+
+const workerControl = registry.services.find((s) => s.id === "worker").control;
+assert.equal(workerControl.start.cwd, "/tmp/hub");
+assert.equal(workerControl.start.env.MASHANG_SERVICE_ROOT, "/tmp/svc");
+assert.equal(workerControl.start.env.OPENCODE_URL, "http://127.0.0.1:5000");
+
+assert.equal(registry.jobs[0].control.run.command, "make");
+assert.deepEqual(registry.jobs[0].control.run.args, ["daily-ops"]);
+assert.equal(registry.runtimeDir, "/tmp/hub/.local/runtime");
+
 const overridden = buildRegistry(env, {
   services: [
     { id: "fetch", label: "custom-fetch", probe: { url: "http://127.0.0.1:9999/health" } },
