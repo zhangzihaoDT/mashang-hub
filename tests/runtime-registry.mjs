@@ -24,6 +24,12 @@ assert.equal(registry.services.find((s) => s.id === "myknbase").probe.url, "http
 assert.equal(registry.services.find((s) => s.id === "worker").probe.pidFile, "/tmp/hub/.local/pids/worker.pid");
 assert.equal(registry.probeTimeoutMs, 1000);
 
+assert.equal(registry.services.find((s) => s.id === "opencode").logs[0].path, "/tmp/hub/.local/logs/opencode.log");
+assert.equal(registry.services.find((s) => s.id === "worker").logs[0].path, "/tmp/hub/.local/logs/worker.log");
+assert.equal(registry.services.find((s) => s.id === "scheduler").logs[0].path, "/tmp/svc/logs/scheduler/stdout.log");
+assert.ok(registry.services.find((s) => s.id === "fetch").logs[0].path.endsWith(".local/app.log"));
+assert.equal(registry.jobs[0].logs[0].dir, "/tmp/svc/logs/scheduler");
+
 const overridden = buildRegistry(env, {
   services: [
     { id: "fetch", label: "custom-fetch", probe: { url: "http://127.0.0.1:9999/health" } },

@@ -3,16 +3,22 @@ import { readFile } from "node:fs/promises";
 import { buildRegistry } from "./runtime/registry.mjs";
 import { collectStatus } from "./runtime/status.mjs";
 import { renderText } from "./runtime/render.mjs";
+import { listLogSources, readTail, followFile } from "./runtime/logs.mjs";
 
 const USAGE = `mashang — local runtime manager (read-only)
 
 Usage:
   mashang status [--json] [--strict]
+  mashang logs [id] [--lines N] [--follow] [--all] [--json]
   mashang help
+
+  logs without id lists registered log sources; with an id (e.g. worker,
+  scheduler, daily, fetch, opencode) it prints the tail of that source.
 
 Environment:
   MASHANG_SERVICE_ROOT   mashang-service checkout (scheduler logs)
-  MASHANG_HUB_ROOT       mashang-hub checkout (worker pid file)
+  MASHANG_HUB_ROOT       mashang-hub checkout (worker pid file, hub logs)
+  MASHANG_FETCH_ROOT     mashang-fetch checkout (app log)
   OPENCODE_URL           default http://127.0.0.1:4096
   MASHANG_FETCH_URL      default http://127.0.0.1:7860
   MYKNBASE_URL           default http://127.0.0.1:7870
@@ -21,6 +27,25 @@ Environment:
 
 V0.1 is read-only: it reports state and never starts or stops anything.
 `;
+
+function parseArgs(args) {
+  const options = { _: [] };
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--lines") { options.lines = Number(args[++i]); continue; }
+    if (arg.startsWith("--lines=")) { options.lines = Number(arg.slice("--lines=".length)); continue; }
+    if (arg.startsWith("-")) { options[arg] = true; continue; }
+    options._.push(arg);
+  }
+  return options;
+}
+
+function formatBytes(bytes) {
+  if (bytes == null) return "-";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 async function loadConfig(env) {
   const path = env.MASHANG_RUNTIME_CONFIG;
@@ -33,24 +58,92 @@ async function loadConfig(env) {
   }
 }
 
-async function commandStatus(args, env) {
-  const json = args.includes("--json");
-  const strict = args.includes("--strict");
+async function commandStatus(rawArgs, env) {
+  const args = parseArgs(rawArgs);
   const registry = buildRegistry(env, await loadConfig(env));
   const status = await collectStatus(registry);
 
-  process.stdout.write(json ? `${JSON.stringify(status, null, 2)}\n` : renderText(status));
+  process.stdout.write(args["--json"] ? `${JSON.stringify(status, null, 2)}\n` : renderText(status));
 
-  if (strict) {
+  if (args["--strict"]) {
     const serviceDown = status.services.some((service) => !service.online);
     const jobFailed = status.jobs.some((job) => job.status === "FAILED");
     if (serviceDown || jobFailed) process.exitCode = 1;
   }
 }
 
+function renderLogList(sources) {
+  if (!sources.length) return "no log sources registered\n";
+  const lines = ["LOG SOURCES"];
+  for (const source of sources) {
+    const dot = source.exists ? "\u001b[32m●\u001b[0m" : "\u001b[31m○\u001b[0m";
+    const where = source.path || "(not found)";
+    const size = source.exists ? formatBytes(source.size) : "-";
+    const seen = source.mtime ? `  ${source.mtime}` : "";
+    lines.push(`  ${dot} ${source.id.padEnd(12)} ${source.label.padEnd(16)} ${size.padStart(9)}  ${where}${seen}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+async function commandLogs(rawArgs, env) {
+  const args = parseArgs(rawArgs);
+  const registry = buildRegistry(env, await loadConfig(env));
+  const sources = await listLogSources(registry);
+  const lines = Number.isInteger(args.lines) && args.lines > 0 ? args.lines : 40;
+  const id = args._[0] || null;
+
+  const selected = args["--all"] ? sources : id ? sources.filter((source) => source.id === id) : [];
+
+  if (!selected.length && !args["--json"] && !id && !args["--all"]) {
+    process.stdout.write(renderLogList(sources));
+    return;
+  }
+  if (id && !selected.length) {
+    process.stderr.write(`unknown log id: ${id}\navailable: ${[...new Set(sources.map((s) => s.id))].join(", ")}\n`);
+    process.exitCode = 2;
+    return;
+  }
+  if (args["--json"] && !id && !args["--all"]) {
+    process.stdout.write(`${JSON.stringify(sources, null, 2)}\n`);
+    return;
+  }
+
+  const existing = selected.filter((source) => source.exists && source.path);
+  for (const source of selected) {
+    if (!source.exists) console.error(`(${source.id}/${source.label}) not found: ${source.path || "(no path)"}`);
+  }
+  if (!existing.length) {
+    process.exitCode = 1;
+    return;
+  }
+
+  if (args["--follow"] && existing.length > 1) {
+    process.stderr.write("--follow requires a single log source; pass an id\n");
+    process.exitCode = 2;
+    return;
+  }
+
+  const multiple = existing.length > 1;
+  for (const source of existing) {
+    if (multiple) process.stdout.write(`\u001b[2m== ${source.id}/${source.label} · ${source.path} ==\u001b[0m\n`);
+    const tail = await readTail(source.path, lines);
+    if (tail) process.stdout.write(`${tail}\n`);
+  }
+
+  if (!args["--follow"]) return;
+
+  const source = existing[0];
+  process.stdout.write(`\u001b[2m-- following ${source.path} (Ctrl-C to stop) --\u001b[0m\n`);
+  await new Promise((resolve) => {
+    const stop = followFile(source.path, (chunk) => process.stdout.write(chunk));
+    process.on("SIGINT", () => { stop(); resolve(); });
+  });
+}
+
 async function main() {
   const [command = "help", ...args] = process.argv.slice(2);
   if (command === "status") return commandStatus(args, process.env);
+  if (command === "logs") return commandLogs(args, process.env);
   if (command === "help" || command === "--help" || command === "-h") {
     process.stdout.write(USAGE);
     return;

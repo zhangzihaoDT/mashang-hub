@@ -92,9 +92,12 @@ npm link                 # once, exposes the `mashang` command
 mashang status           # human-readable
 mashang status --json    # machine-readable
 mashang status --strict  # exit 1 if any service is offline or the daily job failed
+mashang logs             # list registered log sources
+mashang logs worker      # tail one source (worker, scheduler, daily, fetch, opencode)
+mashang logs daily --follow
 ```
 
-Without linking, use `npm run mashang -- status` or `node worker/mashang.mjs status`. The registry lives in `worker/runtime/registry.mjs` and is data, not business logic: targets come from `MASHANG_SERVICE_ROOT`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MYKNBASE_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override. V0.1 is read-only — it never starts or stops a service.
+Without linking, use `npm run mashang -- status` or `node worker/mashang.mjs status`. The registry lives in `worker/runtime/registry.mjs` and is data, not business logic: targets come from `MASHANG_SERVICE_ROOT`, `MASHANG_HUB_ROOT`, `MASHANG_FETCH_ROOT`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MYKNBASE_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override. V0.1 is read-only — it never starts or stops a service.
 
 ## Production Environment
 

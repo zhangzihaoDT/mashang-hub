@@ -15,6 +15,8 @@ export const DAILY_PIPELINE_STEPS = Object.freeze([
   "monitor",
 ]);
 
+export const DATED_LOG_PATTERN = "^\\d{4}-\\d{2}-\\d{2}\\.log$";
+
 function trimSlash(url) {
   return String(url || "").replace(/\/+$/, "");
 }
@@ -39,6 +41,8 @@ function mergeById(defaults, overrides) {
 export function buildRegistry(env = process.env, config = null) {
   const serviceRoot = env.MASHANG_SERVICE_ROOT || join(homedir(), "Documents/github/mashang-service");
   const hubRoot = env.MASHANG_HUB_ROOT || HUB_ROOT;
+  const fetchRoot = env.MASHANG_FETCH_ROOT || join(homedir(), "Documents/github/mashang-fetch");
+  const schedulerLogDir = join(serviceRoot, "logs/scheduler");
   const opencodeURL = trimSlash(env.OPENCODE_URL || DEFAULT_OPENCODE_URL);
   const fetchURL = trimSlash(env.MASHANG_FETCH_URL || DEFAULT_FETCH_URL);
   const myknbaseURL = trimSlash(env.MYKNBASE_URL || DEFAULT_MYKNBASE_URL);
@@ -53,6 +57,7 @@ export function buildRegistry(env = process.env, config = null) {
         category: "service",
         description: "外部链接 → 本地结构化文件",
         probe: { type: "http", url: `${fetchURL}/api/formats` },
+        logs: [{ label: "app", path: join(fetchRoot, ".local/app.log") }],
       },
       {
         id: "myknbase",
@@ -60,6 +65,7 @@ export function buildRegistry(env = process.env, config = null) {
         category: "service",
         description: "个人本地知识库",
         probe: { type: "http", url: `${myknbaseURL}/api/health` },
+        logs: [],
       },
       {
         id: "opencode",
@@ -67,6 +73,7 @@ export function buildRegistry(env = process.env, config = null) {
         category: "runtime",
         description: "本地 Agent Runtime",
         probe: { type: "http", url: `${opencodeURL}/config/providers` },
+        logs: [{ label: "opencode", path: join(hubRoot, ".local/logs/opencode.log") }],
       },
       {
         id: "worker",
@@ -74,6 +81,7 @@ export function buildRegistry(env = process.env, config = null) {
         category: "runtime",
         description: "mashang-hub 本地执行端",
         probe: { type: "process", match: "worker/worker.mjs", pidFile: join(hubRoot, ".local/pids/worker.pid") },
+        logs: [{ label: "worker", path: join(hubRoot, ".local/logs/worker.log") }],
       },
       {
         id: "scheduler",
@@ -81,6 +89,7 @@ export function buildRegistry(env = process.env, config = null) {
         category: "runtime",
         description: "常驻调度器（刷新 + 监控）",
         probe: { type: "process", match: "sales_scheduler.py" },
+        logs: [{ label: "stdout", path: join(schedulerLogDir, "stdout.log") }],
       },
     ],
     jobs: [
@@ -88,7 +97,8 @@ export function buildRegistry(env = process.env, config = null) {
         id: "daily",
         label: "mashang-service daily pipeline",
         description: "每日 09:00 刷新 → 校验 → 同步 → 监控",
-        probe: { type: "scheduler-log", logDir: join(serviceRoot, "logs/scheduler"), steps: [...DAILY_PIPELINE_STEPS] },
+        probe: { type: "scheduler-log", logDir: schedulerLogDir, steps: [...DAILY_PIPELINE_STEPS] },
+        logs: [{ label: "daily (latest)", dir: schedulerLogDir, pattern: DATED_LOG_PATTERN }],
       },
     ],
   };
