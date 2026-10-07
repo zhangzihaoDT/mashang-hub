@@ -59,6 +59,11 @@ try {
     dependencies: [{ id: "opencode", label: "OpenCode", status: "ONLINE" }],
     services: [{ id: "instant", label: "instant", status: "ONLINE", managed: true }],
     jobs: ["hold", "hold-drop"].map((id) => ({ id, label: id, lastRun: { status: "UNKNOWN" } })),
+    operations: [
+      { id: "future-no-arg", label: "Future operation", enabled: true, cancellationSupported: true, timeoutMs: 20000, lastRun: { status: "IDLE" } },
+      { id: "disabled-operation", label: "Disabled operation", enabled: false, lastRun: { status: "IDLE" } },
+      { id: "hold-no-cancel", label: "Uncancellable operation", enabled: true, cancellationSupported: false, lastRun: { status: "IDLE" } },
+    ],
   }));
   await sleep(100);
 
@@ -93,12 +98,31 @@ try {
   const wrongKind = await api("/api/runtime/control", "POST", { op: "run", targetId: "instant" });
   assert.equal(wrongKind.status, 404);
   assert.equal(wrongKind.body.reason, "UNKNOWN_TARGET");
+  const disabledOperation = await api("/api/runtime/control", "POST", { op: "run", targetId: "disabled-operation" });
+  assert.equal(disabledOperation.status, 409);
+  assert.equal(disabledOperation.body.reason, "OPERATION_DISABLED");
 
   const decided = await api(`/api/runtime/controls/${controlId}/decision`, "POST", { approve: true });
   assert.equal(decided.body.status, "RUNNING");
   const completed = await waitControl(controlId, "COMPLETED");
   assert.equal(completed.op, "up");
   assert.equal(requests.at(-1).controlId, controlId);
+
+  const genericOperation = await api("/api/runtime/control", "POST", { op: "run", targetId: "future-no-arg" });
+  assert.equal(genericOperation.status, 202, "a Worker-provided operation is a valid generic run target");
+  await api(`/api/runtime/controls/${genericOperation.body.controlId}/decision`, "POST", { approve: true });
+  const genericCompleted = await waitControl(genericOperation.body.controlId, "COMPLETED");
+  assert.equal(genericCompleted.targetId, "future-no-arg");
+  assert.equal(requests.at(-1).targetId, "future-no-arg", "Hub forwards the opaque operation id without a command mapping");
+
+  const noCancel = await api("/api/runtime/control", "POST", { op: "run", targetId: "hold-no-cancel" });
+  await api(`/api/runtime/controls/${noCancel.body.controlId}/decision`, "POST", { approve: true });
+  await waitControl(noCancel.body.controlId, "RUNNING");
+  const cancelUnsupported = await api(`/api/runtime/controls/${noCancel.body.controlId}/cancel`, "POST");
+  assert.equal(cancelUnsupported.status, 409);
+  assert.equal(cancelUnsupported.body.reason, "CANCELLATION_UNSUPPORTED");
+  ws.send(JSON.stringify({ type: "runtime.control.result", controlId: noCancel.body.controlId, status: "COMPLETED", reason: "OK", code: 0 }));
+  await waitControl(noCancel.body.controlId, "COMPLETED");
 
   const rejected = await api("/api/runtime/control", "POST", { op: "down", targetId: "instant" });
   const rejectedResult = await api(`/api/runtime/controls/${rejected.body.controlId}/decision`, "POST", { approve: false });

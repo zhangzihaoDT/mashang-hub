@@ -40,6 +40,13 @@ function jobLine(job) {
   return `  ${tone("●")} ${pad(job.label, 26)} ${tone(job.status.padEnd(9))} ${dim(detail)}`;
 }
 
+function operationLine(operation) {
+  const run = operation.lastRun || {};
+  const tone = run.status === "COMPLETED" ? green : run.status === "FAILED" || run.status === "CANCELLED" ? red : yellow;
+  const when = run.finishedAt || run.startedAt || "never run";
+  return `  ${tone("●")} ${pad(operation.label, 26)} ${tone((run.status || "UNKNOWN").padEnd(9))} ${dim(when)}`;
+}
+
 export function renderText(status) {
   const lines = [`mashang runtime status  ${dim(status.checkedAt)}`, "", "DEPENDENCIES"];
   for (const dependency of status.dependencies || []) {
@@ -53,6 +60,8 @@ export function renderText(status) {
     if (service.legacy?.length) lines.push(legacyLine(service));
   }
   lines.push("", "JOBS");
-  for (const job of status.jobs) lines.push(jobLine(job));
+  for (const job of status.jobs || []) lines.push(jobLine(job));
+  lines.push("", "OPERATIONS");
+  for (const operation of status.operations || []) lines.push(operationLine(operation));
   return `${lines.join("\n")}\n`;
 }

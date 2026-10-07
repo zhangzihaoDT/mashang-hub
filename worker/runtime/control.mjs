@@ -4,7 +4,7 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { probeService } from "./status.mjs";
 import { findProcesses, isPidAlive } from "./probes.mjs";
-import { writeManualJob } from "./jobs.mjs";
+import { writeManualJob, writeManualOperation } from "./jobs.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -15,6 +15,12 @@ export function findService(registry, id) {
 export function findJob(registry, id) {
   return (registry.jobs || []).find((job) => job.id === id) || null;
 }
+
+export function findOperation(registry, id) {
+  return (registry.operations || []).find((operation) => operation.id === id) || null;
+}
+
+const activeOperations = new Set();
 
 function runToCompletion(spec, { stdio = "inherit", signal } = {}) {
   return new Promise((resolve) => {
@@ -249,13 +255,40 @@ export async function run(job, registry, { log = console, signal } = {}) {
   const cancelled = result.aborted || signal?.aborted;
   const succeeded = !cancelled && result.code === 0;
   await writeManualJob(stateDir, job.id, {
-    status: succeeded ? "COMPLETED" : "FAILED",
+    status: cancelled ? "CANCELLED" : succeeded ? "COMPLETED" : "FAILED",
     startedAt,
     finishedAt,
     code: result.code ?? null,
   });
   if (cancelled) return { status: "cancelled", code: result.code, job };
   return { status: result.code === 0 ? "completed" : "failed", code: result.code, signal: result.signal, job };
+}
+
+/** Execute a no-argument operation declared by the Worker-side provider. */
+export async function runOperation(operation, registry, { log = console, signal, onStatus } = {}) {
+  const spec = operation.run;
+  if (!operation.enabled || !spec) throw new Error(`operation '${operation.id}' is not executable`);
+  if (activeOperations.size > 0) return { status: "busy", code: null };
+  activeOperations.add(operation.id);
+  const stateDir = registry.runtimeDir;
+  const startedAt = new Date().toISOString();
+  const persist = (record) => writeManualOperation(stateDir, operation.id, record);
+  try {
+    await persist({ status: "RUNNING", startedAt, finishedAt: null, code: null, summary: null });
+    await onStatus?.();
+    log.log(`running operation ${operation.id}`);
+    const result = await runToCompletion(spec, { stdio: "inherit", signal });
+    const finishedAt = new Date().toISOString();
+    const cancelled = result.aborted || signal?.aborted;
+    const succeeded = !cancelled && result.code === 0;
+    const status = cancelled ? "CANCELLED" : succeeded ? "COMPLETED" : "FAILED";
+    const summary = succeeded ? "Completed successfully" : cancelled ? "Cancelled" : `Exited with code ${result.code ?? "unknown"}`;
+    await persist({ status, startedAt, finishedAt, code: result.code, summary });
+    await onStatus?.();
+    return { status: cancelled ? "cancelled" : succeeded ? "completed" : "failed", code: result.code, operation };
+  } finally {
+    activeOperations.delete(operation.id);
+  }
 }
 
 function mapServiceResult(result) {
@@ -272,8 +305,19 @@ function mapServiceResult(result) {
  * Execute a generic runtime control operation against the registry.
  * Returns only business-neutral fields: status + stable reason code (+ exit code).
  */
-export async function executeControl(registry, { op, targetId, signal, log = console } = {}) {
+export async function executeControl(registry, { op, targetId, signal, log = console, onOperationStatus } = {}) {
   if (op === "run") {
+    const operation = findOperation(registry, targetId);
+    if (operation) {
+      if (!operation.enabled || !operation.run) return { status: "REFUSED", reason: "OPERATION_DISABLED" };
+      if (activeOperations.size > 0) return { status: "REFUSED", reason: "OPERATION_BUSY" };
+      const result = await runOperation(operation, registry, { log, signal, onStatus: onOperationStatus });
+      if (result.status === "cancelled") return { status: "CANCELLED", reason: "CANCELLED" };
+      if (result.status === "busy") return { status: "REFUSED", reason: "OPERATION_BUSY" };
+      return result.status === "completed"
+        ? { status: "COMPLETED", reason: "OK", code: result.code ?? null }
+        : { status: "FAILED", reason: "OPERATION_FAILED", code: result.code ?? null };
+    }
     const job = findJob(registry, targetId);
     if (!job) return { status: "REFUSED", reason: "UNKNOWN_TARGET" };
     if (!job.control?.run) return { status: "REFUSED", reason: "NO_RUN_ENTRY" };

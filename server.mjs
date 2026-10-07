@@ -72,14 +72,14 @@ function finalizeControl(control, status, reason, code = null) {
   return true;
 }
 function scheduleControlWatchdog(control) {
-  const config = controlTimeoutConfig();
+  const config = controlTimeoutConfig(process.env, control.timeoutMs);
   control.timers.soft = setTimeout(() => onControlSoftTimeout(control), config.requestMs);
 }
 function onControlSoftTimeout(control) {
   if (isTerminalControl(control.status)) return;
   console.log(`control timeout warning: ${control.controlId}`);
   sendWorker({ type: "runtime.control.cancel", controlId: control.controlId, source: "timeout" });
-  control.timers.hard = setTimeout(() => { if (!isTerminalControl(control.status)) finalizeControl(control, "TIMEOUT", "CONTROL_TIMEOUT"); }, controlTimeoutConfig().graceMs);
+  control.timers.hard = setTimeout(() => { if (!isTerminalControl(control.status)) finalizeControl(control, "TIMEOUT", "CONTROL_TIMEOUT"); }, control.graceTimeoutMs ?? controlTimeoutConfig().graceMs);
 }
 
 function scheduleWatchdog(task) {
@@ -286,11 +286,26 @@ const server = createServer(async (req, res) => {
     if (!isValidControlOp(op) || !targetId) return json(res, 400, { error: "Invalid op or targetId" });
     const serviceTarget = runtimeSnapshot?.services?.some((service) => service.id === targetId);
     const jobTarget = runtimeSnapshot?.jobs?.some((job) => job.id === targetId);
+    const operationTarget = runtimeSnapshot?.operations?.find((operation) => operation.id === targetId);
     const dependencyTarget = runtimeSnapshot?.dependencies?.some((dependency) => dependency.id === targetId);
-    const validTarget = !dependencyTarget && (op === "run" ? jobTarget : serviceTarget);
+    const validTarget = !dependencyTarget && (op === "run" ? (jobTarget || Boolean(operationTarget)) : serviceTarget);
     if (!validTarget) return json(res, 404, { error: "Unknown runtime target", reason: "UNKNOWN_TARGET" });
+    if (op === "run" && operationTarget && !operationTarget.enabled) return json(res, 409, { error: "Operation is disabled", reason: "OPERATION_DISABLED" });
     if (!activeWorker || activeWorker.readyState !== 1) return json(res, 503, { error: "Mac Worker is offline" });
-    const control = { controlId: `control_${randomUUID()}`, op, targetId, status: "AWAITING_PERMISSION", reason: null, code: null, timers: {}, createdAt: Date.now(), updatedAt: Date.now() };
+    const control = {
+      controlId: `control_${randomUUID()}`,
+      op,
+      targetId,
+      timeoutMs: operationTarget?.timeoutMs ?? null,
+      cancellationSupported: operationTarget?.cancellationSupported !== false,
+      graceTimeoutMs: controlTimeoutConfig().graceMs,
+      status: "AWAITING_PERMISSION",
+      reason: null,
+      code: null,
+      timers: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
     controls.set(control.controlId, control);
     console.log(`control created: ${control.controlId} op=${op} target=${targetId}`);
     broadcast({ type: "runtime.control.requested", ...publicControl(control) });
@@ -320,6 +335,7 @@ const server = createServer(async (req, res) => {
     if (!control) return json(res, 404, { error: "Control not found" });
     if (isTerminalControl(control.status)) return json(res, 409, { error: "Control already settled", status: control.status });
     if (control.status === "AWAITING_PERMISSION") { finalizeControl(control, "CANCELLED", "USER_CANCELLED"); return json(res, 202, publicControl(control)); }
+    if (!control.cancellationSupported) return json(res, 409, { error: "Operation does not support cancellation", reason: "CANCELLATION_UNSUPPORTED" });
     console.log(`control cancel requested: ${control.controlId}`);
     sendWorker({ type: "runtime.control.cancel", controlId: control.controlId, source: "user" });
     clearTimeout(control.timers.hard);

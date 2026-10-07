@@ -7,10 +7,10 @@
 ## 边界
 
 - Hub 不接收本地路径、命令、PID、探测 URL、日志路径、原始错误详情或内部失败步骤；service 可选上报供用户访问的 `openUrl`。
-- Hub 只理解通用字段：`id`、`label`、`status`、`managed`、`group`、`summary`、`openUrl`、`lastRun`。
-- Dependency、service 与 job 的身份由 Worker 的 registry 定义；Hub 把它们当作不透明的通用条目。
+- Hub 只理解通用字段：`id`、`label`、`status`、`managed`、`group`、`summary`、`openUrl`、`lastRun` 和 operation metadata/status。
+- Dependency、service、job 与 operation 的身份由 Worker 的 registry 定义；Hub 把它们当作不透明的通用条目，不按 operation ID 分支。
 - Worker 连接状态由 Hub 的连接状态表达，不属于 runtime service。
-- Dependency 只读；控制目标仅能是快照中的 service 或 job。
+- Dependency 只读；控制目标仅能是快照中的 service、job 或 operation。
 
 ## 消息：`runtime.snapshot`
 
@@ -30,15 +30,22 @@ Worker 连接后在 `worker.register` 之后立即发送一次，随后周期性
     { "id": "fetch", "label": "mashang-fetch", "group": "APPS", "status": "ONLINE", "managed": true, "openUrl": "http://127.0.0.1:7860" },
     { "id": "scheduler", "label": "Scheduler", "group": "MASHANG-SERVICE", "summary": "后台服务", "status": "ONLINE", "managed": true }
   ],
-  "jobs": [
+  "jobs": [],
+  "operations": [
     {
-      "id": "daily",
-      "label": "Daily pipeline",
+      "id": "opaque-operation-id",
+      "label": "Data operation",
       "group": "MASHANG-SERVICE",
+      "description": "A Worker-declared operation",
+      "enabled": true,
+      "cancellationSupported": true,
+      "timeoutMs": 900000,
       "lastRun": {
-        "status": "FAILED",
-        "startedAt": "2026-10-07 09:00:01",
-        "finishedAt": "2026-10-07 09:00:01"
+        "status": "COMPLETED",
+        "startedAt": "2026-10-07T02:00:00.000Z",
+        "finishedAt": "2026-10-07T02:01:00.000Z",
+        "code": 0,
+        "summary": "Completed successfully"
       }
     }
   ]
@@ -73,6 +80,19 @@ Worker 连接后在 `worker.register` 之后立即发送一次，随后周期性
 | `jobs[].lastRun.status` | enum | `COMPLETED` \| `FAILED` \| `RUNNING` \| `UNKNOWN` |
 | `jobs[].lastRun.startedAt` | string \| null | 最近一次运行的开始时间 |
 | `jobs[].lastRun.finishedAt` | string \| null | 最近一次运行的结束时间 |
+| `operations[]` | array | Worker 声明的通用可执行操作；Hub 不解释其业务含义 |
+| `operations[].id` | string | Worker/Service 定义的不透明稳定标识；Hub 不按 ID 分支 |
+| `operations[].label` | string | UI 展示名 |
+| `operations[].group` | string \| omitted | 可选展示分组 |
+| `operations[].description` | string \| omitted | 面向用户的说明，可包含副作用提示 |
+| `operations[].enabled` | boolean | 当前是否允许执行；Worker 执行端仍需重新校验 |
+| `operations[].cancellationSupported` | boolean | 是否允许用户请求取消 |
+| `operations[].timeoutMs` | integer \| omitted | 建议控制超时；Hub 全局配置可覆盖且设有上限 |
+| `operations[].lastRun.status` | enum | `IDLE` \| `RUNNING` \| `COMPLETED` \| `FAILED` \| `CANCELLED` \| `UNKNOWN` |
+| `operations[].lastRun.startedAt` | string \| null | 最近运行开始时间 |
+| `operations[].lastRun.finishedAt` | string \| null | 最近运行结束时间 |
+| `operations[].lastRun.code` | integer \| null | 可选的通用进程退出码 |
+| `operations[].lastRun.summary` | string \| omitted | 简短安全摘要；不传原始日志、路径或错误 |
 
 Hub 收到快照后按白名单清洗字段、校验枚举并限制条目数量。无效或版本不匹配的消息被丢弃。
 
@@ -94,7 +114,7 @@ Hub 收到快照后按白名单清洗字段、校验枚举并限制条目数量�
 
 ## 控制：`runtime.control`（V1）
 
-控制是独立于状态快照的请求/终态语义。Hub 只传递通用的 `op` 与 `targetId`，不解释目标业务含义。`up`、`down`、`restart` 仅接受当前快照中的 service；`run` 仅接受当前快照中的 job。Dependency 不可控制。未知或类型不匹配的目标由 Hub 中立拒绝（`UNKNOWN_TARGET`）。所有控制动作都是副作用操作，必须经过 Hub 的 Permission 门禁后才下发到 Worker。
+控制是独立于状态快照的请求/终态语义。Hub 只传递通用的 `op` 与 `targetId`，不解释目标业务含义。`up`、`down`、`restart` 仅接受当前快照中的 service；`run` 接受当前快照中的 job 或无参数 operation。Dependency 不可控制。未知或类型不匹配的目标由 Hub 中立拒绝（`UNKNOWN_TARGET`）。所有控制动作都是副作用操作，必须经过 Hub 的 Permission 门禁后才下发到 Worker。
 
 操作集：`up` | `down` | `restart` | `run`（均为小写）。
 
@@ -114,6 +134,12 @@ AWAITING_PERMISSION ──approve──▶ RUNNING ──worker result──▶ 
 
 ```json
 { "op": "up", "targetId": "scheduler" }
+```
+
+对快照中声明的 operation，调用仍然是通用请求，不包含命令或 Service 路径：
+
+```json
+{ "op": "run", "targetId": "opaque-operation-id" }
 ```
 
 → `202 { "controlId": "control_...", "op": "up", "targetId": "scheduler", "status": "AWAITING_PERMISSION", "reason": null, "code": null, "createdAt": 0, "updatedAt": 0 }`
@@ -136,7 +162,7 @@ AWAITING_PERMISSION ──approve──▶ RUNNING ──worker result──▶ 
 ```
 
 - `status` ∈ `COMPLETED` | `FAILED` | `REFUSED` | `CANCELLED`。
-- `reason` 是**稳定、业务无关**的机器码（如 `OK`、`UNKNOWN_TARGET`、`UNKNOWN_OP`、`JOB_FAILED`、`EXEC_FAILED`、`UNVERIFIED`、`REFUSED`、`CANCELLED`）；不携带本地路径、命令或原始错误文本。
+- `reason` 是**稳定、业务无关**的机器码（如 `OK`、`UNKNOWN_TARGET`、`UNKNOWN_OP`、`JOB_FAILED`、`OPERATION_FAILED`、`EXEC_FAILED`、`UNVERIFIED`、`REFUSED`、`CANCELLED`）；不携带本地路径、命令或原始错误文本。
 - `code` 为可选的子进程退出码。
 
 ### Hub SSE 事件
@@ -146,11 +172,12 @@ AWAITING_PERMISSION ──approve──▶ RUNNING ──worker result──▶ 
 
 ### 超时与取消
 
-- Hub 在批准并下发后启动看门狗：`CONTROL_TIMEOUT_MS`（默认 300000）后软超时，向 Worker 发送 `runtime.control.cancel`；再过 `CONTROL_CANCEL_GRACE_MS`（默认 10000）强制终态 `TIMEOUT`。
+- Hub 在批准并下发后启动看门狗：优先使用 `CONTROL_TIMEOUT_MS`；未显式配置时可使用 operation 声明的 `timeoutMs`（最多 3600000ms），其余控制默认 300000ms。软超时后向 Worker 发送 `runtime.control.cancel`；再过 `CONTROL_CANCEL_GRACE_MS`（默认 10000）强制终态 `TIMEOUT`。
 - 用户取消走 `POST /api/runtime/controls/:id/cancel`；先到者生效，若 Worker 已返回终态则不再回退。
 - Worker 断开时，所有非终态控制被判定为 `FAILED`（`WORKER_DISCONNECTED`）。
 
 ## 演进
 
+- `operations` 是 V1 的增量可选字段；旧 Worker 可省略，Hub 按空列表处理。
 - `protocolVersion` 变更时，Hub 与 Worker 需能同时表达旧、新版本；当前只支持 `1`。
-- Runtime UI 对 Worker 和 dependencies 只读；services 提供 `up` / `down` / `restart`，jobs 提供 `run`。
+- Runtime UI 对 Worker 和 dependencies 只读；operation 根据通用 metadata/status 展示和调用。新增 operation 不应要求 Hub 增加业务逻辑或命令映射。

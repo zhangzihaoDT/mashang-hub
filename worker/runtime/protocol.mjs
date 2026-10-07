@@ -39,6 +39,24 @@ export function snapshotFromStatus(status, { workerId, sequence, generatedAt = n
         finishedAt: job.finishedAt ?? null,
       },
     })),
+    operations: (status.operations || []).map((operation) => ({
+      id: operation.id,
+      label: operation.label,
+      ...(typeof operation.group === "string" ? { group: operation.group } : {}),
+      ...(typeof operation.description === "string" ? { description: operation.description } : {}),
+      enabled: Boolean(operation.enabled),
+      cancellationSupported: operation.cancellationSupported !== false,
+      ...(Number.isInteger(operation.timeoutMs) ? { timeoutMs: operation.timeoutMs } : {}),
+      lastRun: {
+        status: operation.lastRun?.status || operation.status || "UNKNOWN",
+        startedAt: operation.lastRun?.startedAt ?? operation.startedAt ?? null,
+        finishedAt: operation.lastRun?.finishedAt ?? operation.finishedAt ?? null,
+        code: Number.isInteger(operation.lastRun?.code) ? operation.lastRun.code : null,
+        ...(typeof (operation.lastRun?.summary ?? operation.summary) === "string"
+          ? { summary: operation.lastRun?.summary ?? operation.summary }
+          : {}),
+      },
+    })),
   };
 }
 

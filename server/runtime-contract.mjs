@@ -2,8 +2,10 @@ export const RUNTIME_PROTOCOL_VERSION = 1;
 const SERVICE_STATUS = new Set(["ONLINE", "OFFLINE", "UNKNOWN"]);
 const DEPENDENCY_STATUS = new Set(["ONLINE", "OFFLINE", "UNKNOWN"]);
 const JOB_STATUS = new Set(["COMPLETED", "FAILED", "RUNNING", "UNKNOWN"]);
+const OPERATION_STATUS = new Set(["IDLE", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]);
 const MAX_ENTRIES = 128;
 const MAX_STRING = 200;
+const MAX_OPERATION_TIMEOUT_MS = 3600000;
 
 function shortString(value) {
   return typeof value === "string" ? value.slice(0, MAX_STRING) : null;
@@ -86,6 +88,37 @@ export function sanitizeRuntimeSnapshot(message) {
     })
     .filter(Boolean);
 
+  const operations = (Array.isArray(message.operations) ? message.operations : [])
+    .slice(0, MAX_ENTRIES)
+    .map((operation) => {
+      const id = shortString(operation?.id);
+      if (!id) return null;
+      const lastRun = operation.lastRun || {};
+      const clean = {
+        id,
+        label: shortString(operation.label) || id,
+        enabled: Boolean(operation.enabled),
+        cancellationSupported: operation.cancellationSupported !== false,
+        lastRun: {
+          status: OPERATION_STATUS.has(lastRun.status) ? lastRun.status : "UNKNOWN",
+          startedAt: timestampOrNull(lastRun.startedAt),
+          finishedAt: timestampOrNull(lastRun.finishedAt),
+          code: Number.isInteger(lastRun.code) ? lastRun.code : null,
+        },
+      };
+      const group = shortString(operation.group);
+      const description = shortString(operation.description);
+      if (group) clean.group = group;
+      if (description) clean.description = description;
+      if (Number.isInteger(operation.timeoutMs) && operation.timeoutMs > 0) {
+        clean.timeoutMs = Math.min(operation.timeoutMs, MAX_OPERATION_TIMEOUT_MS);
+      }
+      const summary = shortString(lastRun.summary);
+      if (summary) clean.lastRun.summary = summary;
+      return clean;
+    })
+    .filter(Boolean);
+
   return {
     protocolVersion: RUNTIME_PROTOCOL_VERSION,
     workerId: shortString(message.workerId),
@@ -94,5 +127,6 @@ export function sanitizeRuntimeSnapshot(message) {
     dependencies,
     services,
     jobs,
+    operations,
   };
 }

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { httpProbe, processProbe, isPidAlive, findProcesses } from "./probes.mjs";
-import { readDailyJob, readManualJob, pickLatestRun } from "./jobs.mjs";
+import { readDailyJob, readManualJob, readManualOperation, pickLatestRun } from "./jobs.mjs";
 
 async function runServiceProbe(service, options) {
   const probe = service.probe;
@@ -99,5 +99,29 @@ export async function collectStatus(registry, options = {}) {
     }),
   );
 
-  return { checkedAt: new Date().toISOString(), dependencies, services, jobs };
+  const operations = await Promise.all((registry.operations || []).map(async (operation) => {
+    const scheduled = operation.probe?.type === "scheduler-log"
+      ? await readDailyJob(operation.probe)
+      : null;
+    const manual = await readManualOperation(registry.runtimeDir, operation.id);
+    const result = pickLatestRun(scheduled, manual) || { status: "IDLE" };
+    return {
+      id: operation.id,
+      label: operation.label,
+      group: operation.group ?? null,
+      description: operation.description || "",
+      enabled: operation.enabled !== false && Boolean(operation.run),
+      cancellationSupported: operation.cancellationSupported !== false,
+      timeoutMs: Number.isInteger(operation.timeoutMs) ? operation.timeoutMs : null,
+      lastRun: {
+        status: result.status || "IDLE",
+        startedAt: result.startedAt ?? null,
+        finishedAt: result.finishedAt ?? null,
+        code: Number.isInteger(result.code) ? result.code : null,
+        summary: result.summary ?? null,
+      },
+    };
+  }));
+
+  return { checkedAt: new Date().toISOString(), dependencies, services, jobs, operations };
 }

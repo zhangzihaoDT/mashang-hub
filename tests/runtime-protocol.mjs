@@ -11,6 +11,9 @@ const status = {
   jobs: [
     { id: "daily", label: "Daily pipeline", group: "MASHANG-SERVICE", status: "FAILED", startedAt: "2026-10-07 09:00:01", finishedAt: "2026-10-07 09:00:01", failedStep: "refresh_full", source: "/local/path" },
   ],
+  operations: [
+    { id: "future-operation", label: "Future operation", group: "MASHANG-SERVICE", description: "A generic operation", enabled: true, cancellationSupported: true, timeoutMs: 900000, lastRun: { status: "COMPLETED", startedAt: "2026-10-07T00:00:00.000Z", finishedAt: "2026-10-07T00:01:00.000Z", code: 0, summary: "Completed successfully" }, run: { command: "secret-command", args: ["secret-arg"] } },
+  ],
 };
 
 const snapshot = snapshotFromStatus(status, { workerId: "w1", sequence: 3, generatedAt: "2026-10-07T00:00:00.000Z" });
@@ -26,9 +29,19 @@ assert.deepEqual(snapshot.jobs[0], {
   group: "MASHANG-SERVICE",
   lastRun: { status: "FAILED", startedAt: "2026-10-07 09:00:01", finishedAt: "2026-10-07 09:00:01" },
 });
+assert.deepEqual(snapshot.operations[0], {
+  id: "future-operation",
+  label: "Future operation",
+  group: "MASHANG-SERVICE",
+  description: "A generic operation",
+  enabled: true,
+  cancellationSupported: true,
+  timeoutMs: 900000,
+  lastRun: { status: "COMPLETED", startedAt: "2026-10-07T00:00:00.000Z", finishedAt: "2026-10-07T00:01:00.000Z", code: 0, summary: "Completed successfully" },
+});
 
 const serialized = JSON.stringify(snapshot);
-for (const leaked of ["detail", "pid", "legacy", "failedStep", "source", "/api/formats", "/local"]) {
+for (const leaked of ["detail", "pid", "legacy", "failedStep", "source", "/api/formats", "/local", "secret-command", "secret-arg"]) {
   assert.equal(serialized.includes(leaked), false, `snapshot leaked "${leaked}"`);
 }
 

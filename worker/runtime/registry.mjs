@@ -9,11 +9,12 @@ const DEFAULT_FETCH_URL = "http://127.0.0.1:7860";
 const DEFAULT_MYKNBASE_URL = "http://127.0.0.1:7870";
 
 export const DAILY_PIPELINE_STEPS = Object.freeze([
-  "refresh_full",
+  "refresh_daily",
   "dataset_validate",
   "daily_observation_sync",
   "monitor",
 ]);
+export const DAILY_PIPELINE_STARTS = Object.freeze(["refresh_daily", "refresh_full"]);
 
 export const DATED_LOG_PATTERN = "^\\d{4}-\\d{2}-\\d{2}\\.log$";
 
@@ -71,8 +72,9 @@ function mergeById(defaults, overrides) {
  *
  * This registry is data, not business logic: it declares how to reach each
  * local runtime, how to start/stop it with its *current canonical* entry, and
- * where to read the last daily-job result. Machine specifics come from the
- * environment or an optional JSON config, never from the Hub.
+ * where to discover operation status and execute declared no-argument
+ * operations. Machine specifics come from the environment or an optional JSON
+ * config, never from the Hub.
  *
  * `match` is the canonical process signature. `legacy` lists retired entry
  * signatures that must never be treated as a valid online service.
@@ -163,22 +165,40 @@ export function buildRegistry(env = process.env, config = null) {
         },
       },
     ],
-    jobs: [
+    jobs: [],
+    operations: [
       {
         id: "daily",
         label: "Daily pipeline",
         group: "MASHANG-SERVICE",
-        description: "每日 09:00 刷新 → 校验 → 同步 → 监控",
-        probe: { type: "scheduler-log", logDir: schedulerLogDir, steps: [...DAILY_PIPELINE_STEPS] },
+        description: "刷新、校验、观察同步与销售监控；会写入本地数据并同步/推送外部系统。",
+        enabled: true,
+        cancellationSupported: true,
+        timeoutMs: 1800000,
+        probe: { type: "scheduler-log", logDir: schedulerLogDir, steps: [...DAILY_PIPELINE_STEPS], startSteps: [...DAILY_PIPELINE_STARTS] },
         logs: [{ label: "daily (latest)", dir: schedulerLogDir, pattern: DATED_LOG_PATTERN }],
-        control: {
-          run: {
-            command: "make",
-            args: ["daily-ops"],
-            cwd: serviceRoot,
-            detach: false,
-            env: schedulerSeries ? { SERIES: schedulerSeries } : {},
-          },
+        run: {
+          command: "make",
+          args: ["daily-ops"],
+          cwd: serviceRoot,
+          detach: false,
+          env: schedulerSeries ? { SERIES: schedulerSeries } : {},
+        },
+      },
+      {
+        id: "allupdate",
+        label: "Full data update",
+        group: "MASHANG-SERVICE",
+        description: "刷新全部数据集并校验；会写入本地数据。",
+        enabled: true,
+        cancellationSupported: true,
+        timeoutMs: 1800000,
+        run: {
+          command: "make",
+          args: ["allupdate"],
+          cwd: serviceRoot,
+          detach: false,
+          env: schedulerSeries ? { SERIES: schedulerSeries } : {},
         },
       },
     ],
@@ -194,5 +214,6 @@ export function buildRegistry(env = process.env, config = null) {
     dependencies: mergeById(defaults.dependencies, config.dependencies),
     services: mergeById(defaults.services, config.services),
     jobs: mergeById(defaults.jobs, config.jobs),
+    operations: mergeById(defaults.operations, config.operations),
   };
 }

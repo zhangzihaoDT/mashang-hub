@@ -7,20 +7,22 @@ const STEP_RESULT = /^■\s+(\S+)\s+exit=(-?\d+)$/;
 const STEP_SKIP = /^跳过\s+(\S+?)：/;
 const DATED_LOG = /^\d{4}-\d{2}-\d{2}\.log$/;
 const JOB_STATE_DIR = "jobs";
+const OPERATION_STATE_DIR = "operations";
 
 /**
  * Parse one scheduler log file and return the most recent daily-pipeline run.
- * The daily pipeline is uniquely identified by its first step (`refresh_full`).
+ * The daily pipeline is identified by its first step. `startSteps` allows the
+ * parser to recognize historic and current names during a scheduler migration.
  * Pure function → easy to test without touching the filesystem.
  */
-export function parseSchedulerLog(text, steps) {
-  const first = steps[0];
+export function parseSchedulerLog(text, steps, startSteps = [...new Set([steps[0], "refresh_full"])]) {
+  const isPipelineStart = (message) => startSteps.includes(STEP_START.exec(message)?.[1]);
   const lines = String(text || "").split(/\r?\n/);
 
   let startIndex = -1;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i].match(LOG_LINE);
-    if (line && STEP_START.exec(line[2])?.[1] === first) {
+    if (line && isPipelineStart(line[2])) {
       startIndex = i;
       break;
     }
@@ -46,12 +48,14 @@ export function parseSchedulerLog(text, steps) {
     }
     const skip = STEP_SKIP.exec(message);
     if (skip) skipped.push({ name: skip[1], at: timestamp });
-    if (i > startIndex && STEP_START.exec(message)?.[1] === first) break;
+    if (i > startIndex && isPipelineStart(message)) break;
   }
 
   const failed = results.find((step) => step.exitCode !== 0);
   const completed = new Set(results.map((step) => step.name));
-  const allDone = steps.every((step) => completed.has(step));
+  const allDone = steps.every((step, index) => index === 0
+    ? startSteps.some((candidate) => completed.has(candidate))
+    : completed.has(step));
 
   let status = "RUNNING";
   if (failed) status = "FAILED";
@@ -91,7 +95,7 @@ export async function readDailyJob(spec) {
     } catch {
       continue;
     }
-    const run = parseSchedulerLog(text, steps);
+    const run = parseSchedulerLog(text, steps, spec.startSteps || [...new Set([steps[0], "refresh_full"])]);
     if (run.status !== "UNKNOWN") return { ...run, source: join(spec.logDir, file), logDate: file.replace(/\.log$/, "") };
   }
   return { status: "UNKNOWN", reason: `no daily run found in ${spec.logDir}`, steps: [], skipped: [], source: spec.logDir };
@@ -109,16 +113,26 @@ function toEpoch(value) {
  * the Hub protocol and only feeds `lastRun`.
  */
 export async function readManualJob(stateDir, id) {
+  return readManualRun(stateDir, JOB_STATE_DIR, id);
+}
+
+export async function readManualOperation(stateDir, id) {
+  return (await readManualRun(stateDir, OPERATION_STATE_DIR, id))
+    || readManualRun(stateDir, JOB_STATE_DIR, id);
+}
+
+async function readManualRun(stateDir, namespace, id) {
   if (!stateDir || !id) return null;
   try {
-    const record = JSON.parse(await readFile(join(stateDir, JOB_STATE_DIR, `${id}.json`), "utf8"));
+    const record = JSON.parse(await readFile(join(stateDir, namespace, `${id}.json`), "utf8"));
     if (!record || typeof record.status !== "string") return null;
     return {
       status: record.status,
       startedAt: record.startedAt ?? null,
       finishedAt: record.finishedAt ?? null,
       code: Number.isInteger(record.code) ? record.code : null,
-      source: JOB_STATE_DIR,
+      summary: typeof record.summary === "string" ? record.summary.slice(0, 200) : null,
+      source: namespace,
     };
   } catch {
     return null;
@@ -127,14 +141,23 @@ export async function readManualJob(stateDir, id) {
 
 /** Persist a manual run record so it survives a Worker restart. */
 export async function writeManualJob(stateDir, id, record) {
+  return writeManualRun(stateDir, JOB_STATE_DIR, id, record);
+}
+
+export async function writeManualOperation(stateDir, id, record) {
+  return writeManualRun(stateDir, OPERATION_STATE_DIR, id, record);
+}
+
+async function writeManualRun(stateDir, namespace, id, record) {
   if (!stateDir || !id) return null;
   const stored = {
     status: record.status,
     startedAt: record.startedAt ?? null,
     finishedAt: record.finishedAt ?? null,
     code: Number.isInteger(record.code) ? record.code : null,
+    summary: typeof record.summary === "string" ? record.summary.slice(0, 200) : null,
   };
-  const dir = join(stateDir, JOB_STATE_DIR);
+  const dir = join(stateDir, namespace);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, `${id}.json`), `${JSON.stringify(stored, null, 2)}\n`, "utf8");
   return stored;

@@ -32,7 +32,12 @@ function runtimeResponse() {
     { id: "fetch", label: "mashang-fetch", group: "APPS", status: "ONLINE", managed: false, openUrl: "http://127.0.0.1:7860" },
     { id: "myknbase", label: "myknbase", group: "APPS", status: "OFFLINE", managed: false, openUrl: "http://127.0.0.1:7870" },
     { id: "scheduler", label: "Scheduler", group: "MASHANG-SERVICE", summary: "后台服务", status: "ONLINE", managed: true },
-  ], jobs: [{ id: "daily", label: "Daily pipeline", group: "MASHANG-SERVICE", lastRun: { status: "FAILED", startedAt: "2026-10-07T09:00:00", finishedAt: "2026-10-07T09:00:00" } }] } };
+  ], jobs: [], operations: [
+    { id: "daily", label: "Daily pipeline", group: "MASHANG-SERVICE", description: "Daily operation", enabled: true, lastRun: { status: "FAILED", startedAt: "2026-10-07T09:00:00", finishedAt: "2026-10-07T09:00:00" } },
+    { id: "future-no-arg", label: "Future operation", group: "MASHANG-SERVICE", description: "A Worker-provided operation", enabled: true, lastRun: { status: "IDLE" } },
+    { id: "allupdate", label: "Full data update", group: "MASHANG-SERVICE", description: "Writes local data", enabled: true, lastRun: { status: "IDLE" } },
+    { id: "disabled-operation", label: "Disabled operation", group: "MASHANG-SERVICE", description: "Unavailable", enabled: false, lastRun: { status: "UNKNOWN" } },
+  ] } };
 }
 global.fetch = async (url, options = {}) => {
   calls.push({ url, options });
@@ -67,6 +72,12 @@ assert.match(rendered, /后台服务/);
 assert.match(rendered, /Daily pipeline/);
 assert.match(rendered, /Failed · 09:00/);
 assert.match(rendered, /data-op="run" data-target="daily">Run<\/button>/);
+assert.match(rendered, /Full data update/);
+assert.match(rendered, /data-op="run" data-target="allupdate">Run<\/button>/);
+assert.match(rendered, /Future operation/);
+assert.match(rendered, /data-op="run" data-target="future-no-arg">Run<\/button>/);
+assert.match(rendered, /Disabled operation/);
+assert.doesNotMatch(rendered, /data-op="run" data-target="disabled-operation"/);
 assert.doesNotMatch(rendered, /href="http:\/\/127\.0\.0\.1:7870"/);
 assert.equal(rendered.includes("外部"), false, "service labels must not imply an external system");
 assert.equal(rendered.includes("托管"), false, "service control status is communicated by available actions");
@@ -92,6 +103,12 @@ assert.ok(created, "clicking a control button must POST /api/runtime/control");
 assert.equal(created.options.method, "POST");
 assert.deepEqual(JSON.parse(created.options.body), { op: "restart", targetId: "fetch" });
 assert.match(elements.get("runtimeBody").innerHTML, /<h3>Control<\/h3>/);
+
+calls.length = 0;
+body.fire("click", { target: { closest: (selector) => (selector === "[data-op]" ? { dataset: { op: "run", target: "future-no-arg" } } : null) } });
+await new Promise((resolve) => setTimeout(resolve, 0));
+const genericOperationRequest = calls.find((call) => call.url === "/api/runtime/control");
+assert.deepEqual(JSON.parse(genericOperationRequest.options.body), { op: "run", targetId: "future-no-arg" }, "Hub invokes an opaque operation without operation-specific UI logic");
 
 calls.length = 0;
 body.fire("click", { target: { closest: (selector) => (selector === "[data-decision]" ? { dataset: { control: "control_1", decision: "approve" } } : null) } });

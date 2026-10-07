@@ -26,6 +26,11 @@ const clean = sanitizeRuntimeSnapshot({
     { id: "daily", label: "Daily pipeline", group: "MASHANG-SERVICE", lastRun: { status: "FAILED", failedStep: "refresh_full", source: "/local" } },
     { id: "j2", status: "RUNNING" },
   ],
+  operations: [
+    { id: "future-operation", label: "Future operation", group: "MASHANG-SERVICE", description: "Generic description", enabled: true, cancellationSupported: true, timeoutMs: 7200000, command: "ignore", lastRun: { status: "RUNNING", startedAt: "2026-10-07T00:00:00.000Z", path: "/local", summary: "Working" } },
+    { id: "disabled", enabled: false, lastRun: { status: "INVALID" } },
+    { label: "no-id", enabled: true },
+  ],
 });
 
 assert.deepEqual(clean.services, [
@@ -37,6 +42,10 @@ assert.deepEqual(clean.dependencies, [{ id: "opencode", label: "OpenCode", statu
 assert.deepEqual(clean.jobs, [
   { id: "daily", label: "Daily pipeline", lastRun: { status: "FAILED", startedAt: null, finishedAt: null }, group: "MASHANG-SERVICE" },
   { id: "j2", label: "j2", lastRun: { status: "UNKNOWN", startedAt: null, finishedAt: null } },
+]);
+assert.deepEqual(clean.operations, [
+  { id: "future-operation", label: "Future operation", enabled: true, cancellationSupported: true, lastRun: { status: "RUNNING", startedAt: "2026-10-07T00:00:00.000Z", finishedAt: null, code: null, summary: "Working" }, group: "MASHANG-SERVICE", description: "Generic description", timeoutMs: 3600000 },
+  { id: "disabled", label: "disabled", enabled: false, cancellationSupported: true, lastRun: { status: "UNKNOWN", startedAt: null, finishedAt: null, code: null } },
 ]);
 assert.equal(clean.sequence, 4);
 

@@ -177,7 +177,12 @@ async function handleControlRequest(message) {
   activeControls.set(message.controlId, controller);
   console.log(`control received: ${message.controlId} op=${message.op} target=${message.targetId}`);
   try {
-    const result = await executeControl(runtimeRegistry, { op: message.op, targetId: message.targetId, signal: controller.signal });
+    const result = await executeControl(runtimeRegistry, {
+      op: message.op,
+      targetId: message.targetId,
+      signal: controller.signal,
+      onOperationStatus: publishRuntimeSnapshot,
+    });
     send({ type: "runtime.control.result", controlId: message.controlId, status: result.status, reason: result.reason, code: result.code ?? null });
     console.log(`control result sent: ${message.controlId} status=${result.status} reason=${result.reason}`);
   } catch (error) {

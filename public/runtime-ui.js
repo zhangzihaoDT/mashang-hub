@@ -10,6 +10,11 @@ const JOB_STATES = {
   RUNNING: { label: "Running", cls: "running" },
   UNKNOWN: { label: "Unknown", cls: "unknown" },
 };
+const OPERATION_STATES = {
+  ...JOB_STATES,
+  IDLE: { label: "尚未运行", cls: "unknown" },
+  CANCELLED: { label: "已取消", cls: "failed" },
+};
 const CONTROL_STATES = {
   AWAITING_PERMISSION: { label: "待审批", cls: "running" },
   RUNNING: { label: "执行中", cls: "running" },
@@ -69,6 +74,8 @@ export function initRuntimeUI() {
     if (service) return service.label || service.id;
     const job = (snapshot?.jobs || []).find((item) => item.id === targetId);
     if (job) return job.label || job.id;
+    const operation = (snapshot?.operations || []).find((item) => item.id === targetId);
+    if (operation) return operation.label || operation.id;
     return targetId;
   }
   function upsertControl(control) {
@@ -115,9 +122,23 @@ export function initRuntimeUI() {
     const sub = when ? `${state.label} · ${escapeHTML(formatClockTime(when))}` : state.label;
     return `<li class="rt-item"><span class="rt-dot ${state.cls}"></span><div class="rt-main"><strong>${escapeHTML(job.label || job.id)}</strong><span class="rt-sub">${sub}</span></div><div class="rt-actions">${actionButtons(["run"], job.id)}</div></li>`;
   }
+  function operationItem(operation) {
+    const last = operation.lastRun || {};
+    const state = stateOf(OPERATION_STATES, last.status);
+    const when = last.finishedAt || last.startedAt;
+    const detail = [
+      state.label,
+      when ? escapeHTML(formatClockTime(when)) : "",
+      last.summary ? escapeHTML(last.summary) : "",
+    ].filter(Boolean).join(" · ");
+    const description = operation.description ? `<span class="rt-sub">${escapeHTML(operation.description)}</span>` : "";
+    const actions = operation.enabled ? actionButtons(["run"], operation.id) : "";
+    return `<li class="rt-item"><span class="rt-dot ${state.cls}"></span><div class="rt-main"><strong>${escapeHTML(operation.label || operation.id)}</strong><span class="rt-sub">${detail}</span>${description}</div><div class="rt-actions">${actions}</div></li>`;
+  }
   function controlItem(control) {
     const state = stateOf(CONTROL_STATES, control.status);
     const target = targetLabel(control.targetId);
+    const targetOperation = (snapshot?.operations || []).find((item) => item.id === control.targetId);
     const active = ACTIVE_CONTROL_STATUSES.has(control.status);
     const title = control.status === "RUNNING"
       ? `${target} · ${OP_PROGRESS[control.op] || state.label}`
@@ -128,7 +149,7 @@ export function initRuntimeUI() {
     let actions = "";
     if (control.status === "AWAITING_PERMISSION") {
       actions = `<button class="rt-btn allow" data-control="${escapeHTML(control.controlId)}" data-decision="approve">允许</button><button class="rt-btn reject" data-control="${escapeHTML(control.controlId)}" data-decision="reject">拒绝</button>`;
-    } else if (control.status === "RUNNING") {
+    } else if (control.status === "RUNNING" && targetOperation?.cancellationSupported !== false) {
       actions = `<button class="rt-btn" data-control="${escapeHTML(control.controlId)}" data-cancel="1">取消</button>`;
     }
     return `<li class="rt-item rt-control"><span class="rt-dot ${state.cls}"></span><div class="rt-main"><strong>${escapeHTML(title)}</strong>${detail ? `<span class="rt-sub">${detail}</span>` : ""}</div><div class="rt-actions">${actions}</div></li>`;
@@ -154,6 +175,7 @@ export function initRuntimeUI() {
     const services = snapshot?.services || [];
     const dependencies = snapshot?.dependencies || [];
     const jobs = snapshot?.jobs || [];
+    const operations = snapshot?.operations || [];
     const workerStatus = workerOnline ? "ONLINE" : "OFFLINE";
     const workerState = stateOf(SERVICE_STATES, workerStatus);
     sections.push(`<div class="rt-group"><h3>Worker</h3><ul class="rt-list"><li class="rt-item"><span class="rt-dot ${workerState.cls}" role="img" aria-label="${workerState.label}"></span><div class="rt-main"><strong>${escapeHTML(snapshot?.workerId || "Worker")}</strong></div></li></ul></div>`);
@@ -169,8 +191,9 @@ export function initRuntimeUI() {
       }
       for (const service of services) addEntry(service.group || "Services", "service", service);
       for (const job of jobs) addEntry(job.group || "Jobs", "job", job);
+      for (const operation of operations) addEntry(operation.group || "Operations", "operation", operation);
       for (const [group, entries] of groupedEntries) {
-        const items = entries.map(({ kind, item }) => kind === "service" ? serviceItem(item) : jobItem(item)).join("");
+        const items = entries.map(({ kind, item }) => kind === "service" ? serviceItem(item) : kind === "job" ? jobItem(item) : operationItem(item)).join("");
         sections.push(`<div class="rt-group"><h3>${escapeHTML(group)}</h3><ul class="rt-list">${items}</ul></div>`);
       }
     }

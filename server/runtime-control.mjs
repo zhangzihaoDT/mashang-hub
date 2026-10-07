@@ -9,11 +9,17 @@ export function isTerminalControl(status) { return terminalSet.has(status); }
 const DEFAULT_CONTROL_TIMEOUT_MS = 300000;
 const DEFAULT_CONTROL_GRACE_MS = 10000;
 
-export function controlTimeoutConfig(env = process.env) {
-  const requestMs = Number(env.CONTROL_TIMEOUT_MS ?? DEFAULT_CONTROL_TIMEOUT_MS);
+export function controlTimeoutConfig(env = process.env, suggestedRequestMs = null) {
+  const configuredRequestMs = Number(env.CONTROL_TIMEOUT_MS);
+  const suggested = Number(suggestedRequestMs);
+  const requestMs = Number.isFinite(configuredRequestMs) && configuredRequestMs > 0
+    ? configuredRequestMs
+    : Number.isFinite(suggested) && suggested > 0
+      ? Math.min(suggested, 3600000)
+      : DEFAULT_CONTROL_TIMEOUT_MS;
   const graceMs = Number(env.CONTROL_CANCEL_GRACE_MS ?? DEFAULT_CONTROL_GRACE_MS);
   return {
-    requestMs: Number.isFinite(requestMs) && requestMs > 0 ? requestMs : DEFAULT_CONTROL_TIMEOUT_MS,
+    requestMs,
     graceMs: Number.isFinite(graceMs) && graceMs >= 0 ? graceMs : DEFAULT_CONTROL_GRACE_MS,
   };
 }

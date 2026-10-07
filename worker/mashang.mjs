@@ -4,7 +4,7 @@ import { buildRegistry } from "./runtime/registry.mjs";
 import { collectStatus } from "./runtime/status.mjs";
 import { renderText } from "./runtime/render.mjs";
 import { listLogSources, readTail, followFile } from "./runtime/logs.mjs";
-import { up, down, restart, run, findService, findJob } from "./runtime/control.mjs";
+import { up, down, restart, run, runOperation, findService, findJob, findOperation } from "./runtime/control.mjs";
 
 const USAGE = `mashang — local runtime manager
 
@@ -13,12 +13,12 @@ Usage:
   mashang up <service>
   mashang down <service>
   mashang restart <service>
-  mashang run <job>
+  mashang run <job|operation>
   mashang logs [id] [--lines N] [--follow] [--all] [--json]
   mashang help
 
-  Services and jobs are declared by the registry; the manager only executes
-  the declared canonical entry and verifies the result.
+  Services, jobs and operations are declared by the registry; the manager only
+  executes the declared canonical entry and verifies the result.
 
 Environment:
   MASHANG_SERVICE_ROOT   mashang-service checkout (scheduler logs)
@@ -31,7 +31,7 @@ Environment:
   MASHANG_FETCH_URL      default http://127.0.0.1:7860
   MYKNBASE_URL           default http://127.0.0.1:7870
   HUB_URL                worker registration target (default ws://127.0.0.1:3000)
-  MASHANG_RUNTIME_CONFIG path to a JSON {services,jobs} override
+  MASHANG_RUNTIME_CONFIG path to a JSON {services,jobs,operations} override
   RUNTIME_PROBE_TIMEOUT_MS  per-probe timeout, default 2500
   RUNTIME_CONTROL_VERIFY_MS post-action verification window, default 15000
 `;
@@ -76,7 +76,8 @@ async function commandStatus(rawArgs, env) {
   if (args["--strict"]) {
     const serviceDown = status.services.some((service) => !service.online);
     const jobFailed = status.jobs.some((job) => job.status === "FAILED");
-    if (serviceDown || jobFailed) process.exitCode = 1;
+    const operationFailed = (status.operations || []).some((operation) => operation.lastRun.status === "FAILED");
+    if (serviceDown || jobFailed || operationFailed) process.exitCode = 1;
   }
 }
 
@@ -105,13 +106,25 @@ async function commandControl(kind, rawArgs, env) {
   const args = parseArgs(rawArgs);
   const id = args._[0];
   if (!id) {
-    process.stderr.write(`usage: mashang ${kind} <${kind === "run" ? "job" : "service"}>\n`);
+    process.stderr.write(`usage: mashang ${kind} <${kind === "run" ? "job|operation" : "service"}>\n`);
     process.exitCode = 2;
     return;
   }
   const registry = buildRegistry(env, await loadConfig(env));
 
   if (kind === "run") {
+    const operation = findOperation(registry, id);
+    if (operation) {
+      try {
+        const result = await runOperation(operation, registry, { log: CONTROL_LOGGER });
+        process.stdout.write(`operation ${id} ${result.status} (exit ${result.code})\n`);
+        process.exitCode = result.status === "completed" ? 0 : 1;
+      } catch (error) {
+        process.stderr.write(`${error.message}\n`);
+        process.exitCode = 2;
+      }
+      return;
+    }
     const job = findJob(registry, id);
     if (!job) {
       process.stderr.write(`unknown job: ${id}\n`);
