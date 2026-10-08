@@ -1,10 +1,10 @@
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { basename, dirname, extname, relative, resolve } from "node:path";
+import { dirname } from "node:path";
 import { WebSocket } from "ws";
-import { isAllowedArtifactPath } from "./artifact-policy.mjs";
+import { resolveLocalArtifact } from "./artifact-resolver.mjs";
 import { buildRegistry } from "./runtime/registry.mjs";
 import { buildRuntimeSnapshot } from "./runtime/protocol.mjs";
 import { executeControl } from "./runtime/control.mjs";
@@ -69,21 +69,10 @@ function modelList(data) {
     { key: "luna", label: "GPT-5.6 Luna", available: Boolean(luna), providerID: luna?.providerID, modelID: luna?.id, actualName: luna?.name },
   ];
 }
-async function resolveLocalArtifact(path) {
-  if (!path || path.includes("\\") || path.split("/").some((part) => part === "..")) return null;
-  const root = await realpath(projectRoot); const candidate = path.startsWith("/") ? resolve(path) : resolve(root, path); const candidatePath = relative(root, candidate);
-  if (!candidatePath || candidatePath.startsWith("..") || candidatePath.startsWith("/")) return null;
-  const canonical = await realpath(candidate); const canonicalPath = relative(root, canonical);
-  if (!canonicalPath || canonicalPath.startsWith("..") || canonicalPath.startsWith("/")) return null;
-  if (!isAllowedArtifactPath(canonicalPath, artifactOutputRoots)) return null;
-  const extension = extname(canonical).toLowerCase(); const names = { ".md": ["Markdown", "text/markdown"], ".html": ["HTML", "text/html"], ".csv": ["CSV", "text/csv"], ".png": ["PNG", "image/png"] };
-  if (!names[extension]) return null; const details = await stat(canonical); if (!details.isFile() || details.size > 20 * 1024 * 1024) return null;
-  return { file: canonical, path: canonicalPath, name: basename(canonical), extension, type: names[extension][0], mimeType: names[extension][1], size: details.size };
-}
 async function detectArtifacts(text, taskId) {
   const pattern = /(?:^|[\s"'`(：:])([^\s"'`<>(),;]+\.(?:md|html|csv|png))(?=$|[\s"'`<>(),;])/giu;
   for (const match of text.matchAll(pattern)) {
-    const artifact = await resolveLocalArtifact(match[1]); if (!artifact) { console.log("artifact candidate rejected"); continue; }
+    const artifact = await resolveLocalArtifact(match[1], projectRoot, artifactOutputRoots); if (!artifact) { console.log("artifact candidate rejected"); continue; }
     console.log("artifact candidate accepted");
     const artifactId = `artifact_${randomUUID()}`; localArtifacts.set(artifactId, artifact);
     send({ type: "artifact.created", artifactId, taskId, name: artifact.name, extension: artifact.extension, mimeType: artifact.mimeType, artifactType: artifact.type, size: artifact.size, path: artifact.path });
