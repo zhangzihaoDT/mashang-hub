@@ -24,7 +24,7 @@ assert.deepEqual(daily.probe.steps, [...DAILY_PIPELINE_STEPS]);
 assert.deepEqual(daily.probe.startSteps, [...DAILY_PIPELINE_STARTS]);
 assert.equal(daily.probe.logDir, "/tmp/svc/logs/scheduler");
 assert.equal(daily.run.command, "make");
-assert.deepEqual(daily.run.args, ["daily-ops"]);
+assert.deepEqual(daily.run.args, ["data-pipeline"]);
 const allupdate = registry.operations.find((operation) => operation.id === "allupdate");
 assert.equal(allupdate.run.command, "make");
 assert.deepEqual(allupdate.run.args, ["allupdate"]);

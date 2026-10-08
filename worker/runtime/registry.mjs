@@ -171,7 +171,7 @@ export function buildRegistry(env = process.env, config = null) {
         id: "daily",
         label: "Daily pipeline",
         group: "MASHANG-SERVICE",
-        description: "刷新、校验、观察同步与销售监控；会写入本地数据并同步/推送外部系统。",
+        description: "刷新、校验与观察同步；会写入本地数据并同步外部系统（不含销售监控）。",
         enabled: true,
         cancellationSupported: true,
         timeoutMs: 1800000,
@@ -179,7 +179,7 @@ export function buildRegistry(env = process.env, config = null) {
         logs: [{ label: "daily (latest)", dir: schedulerLogDir, pattern: DATED_LOG_PATTERN }],
         run: {
           command: "make",
-          args: ["daily-ops"],
+          args: ["data-pipeline"],
           cwd: serviceRoot,
           detach: false,
           env: schedulerSeries ? { SERIES: schedulerSeries } : {},
