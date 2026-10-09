@@ -12,9 +12,31 @@ const state = { session: null, connected: false, status: "IDLE", workerStatus: "
 const TASK_LABELS = { IDLE: "等待输入", SUBMITTING: "正在提交", UNDERSTANDING: "正在理解请求", PLANNING: "正在规划", RUNNING: "正在分析", RENDERING: "正在整理结果", COMPLETED: "分析完成", FAILED: "执行失败", INTERRUPTED: "执行中断", TIMEOUT: "执行超时", CANCELLED: "已取消", WAITING_PERMISSION: "等待权限", ERROR: "连接错误" };
 
 function escapeHTML(value = "") { return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char])); }
+function markdownTable(lines, start) {
+  const isDivider = (line) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+  if (start + 1 >= lines.length || !lines[start].includes("|") || !isDivider(lines[start + 1])) return null;
+  const splitRow = (line) => line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+  const headers = splitRow(lines[start]);
+  const rows = [];
+  let index = start + 2;
+  while (index < lines.length && lines[index].includes("|") && lines[index].trim()) { rows.push(splitRow(lines[index])); index += 1; }
+  return { headers, rows, next: index };
+}
 function markdown(value = "") {
   const blocks = [];
   let text = escapeHTML(value).replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_, lang, code) => { blocks.push(`<pre><code>${code.trim()}</code></pre>`); return `\x00${blocks.length - 1}\x00`; });
+  const lines = text.split("\n");
+  const out = [];
+  for (let i = 0; i < lines.length;) {
+    const table = markdownTable(lines, i);
+    if (!table) { out.push(lines[i]); i += 1; continue; }
+    const head = `<thead><tr>${table.headers.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead>`;
+    const body = table.rows.length ? `<tbody>${table.rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>` : "";
+    blocks.push(`<div class="md-table"><table>${head}${body}</table></div>`);
+    out.push("", `\x00${blocks.length - 1}\x00`, "");
+    i = table.next;
+  }
+  text = out.join("\n");
   text = text.replace(/^### (.*)$/gm, "<h3>$1</h3>").replace(/^## (.*)$/gm, "<h2>$1</h2>").replace(/^# (.*)$/gm, "<h2>$1</h2>");
   text = text.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   text = text.split(/\n{2,}/).map((paragraph) => paragraph.startsWith("\x00") ? paragraph : `<p>${paragraph.replaceAll("\n", "<br>")}</p>`).join("");
