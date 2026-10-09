@@ -240,9 +240,14 @@ Each task contains:
   "model": {
     "providerID": "deepseek",
     "modelID": "deepseek-flash"
-  }
+  },
+  "workspaceId": "myknbase"
 }
 ```
+
+`workspaceId` is optional and opaque to the Hub: it only enforces shape/size (`[A-Za-z0-9_-]{1,64}`) and forwards it unchanged. The Worker resolves it against a **local** workspace registry (`worker/workspaces.mjs`), which maps each id to a project directory and its artifact output roots. Missing/empty ids use the `default` workspace (the Worker's `MASHANG_SERVICE_ROOT`); unknown ids make the Worker fail the task neutrally with reason `UNKNOWN_WORKSPACE`. A Hub Session maps to one OpenCode Session **per workspace**, since each workspace is a different OpenCode project.
+
+The Worker advertises only `{ id, label }` per workspace in `worker.register`; the Hub exposes them at `GET /api/workspaces`. Local roots never cross the boundary. Workspaces are configured in the Worker via `MYKNBASE_ROOT` (registers the `myknbase` workspace), `MASHANG_SERVICE_ROOT` (the `default` workspace) and an optional `MASHANG_WORKSPACES_CONFIG` JSON file.
 
 `task.cancel` carries `{ taskId, source: "timeout" | "user" }`; the Worker echoes `source` back on the resulting `task.cancelled`.
 

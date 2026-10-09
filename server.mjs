@@ -39,7 +39,19 @@ function sendWorker(message) { if (!activeWorker || activeWorker.readyState !== 
 function workerStatus(status, extra = {}) { broadcast({ type: "worker.status", status, workerId: activeWorker?.workerId || extra.workerId, ...extra }); }
 
 function modelString(model) { return model?.providerID && model?.modelID ? `${model.providerID}/${model.modelID}` : "unknown"; }
-function publicTask(task) { return { taskId: task.taskId, sessionId: task.sessionId, conversationId: task.conversationId, turnId: task.turnId, model: task.model, status: task.status, createdAt: task.createdAt }; }
+function publicTask(task) { return { taskId: task.taskId, sessionId: task.sessionId, conversationId: task.conversationId, turnId: task.turnId, model: task.model, workspaceId: task.workspaceId || null, status: task.status, createdAt: task.createdAt }; }
+
+// Workspace ids are opaque to the Hub. It only enforces shape/size and forwards
+// them; the Worker decides what each id maps to locally.
+const WORKSPACE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+function sanitizeWorkspaceId(value) { const id = String(value).trim(); return WORKSPACE_ID_PATTERN.test(id) ? id : null; }
+function sanitizeWorkspaces(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item) => item && typeof item.id === "string" && WORKSPACE_ID_PATTERN.test(item.id))
+    .slice(0, 32)
+    .map((item) => ({ id: item.id, label: typeof item.label === "string" && item.label ? item.label.slice(0, 80) : item.id }));
+}
 function clearTaskTimers(task) { clearTimeout(task.timers.soft); clearTimeout(task.timers.hard); clearTimeout(task.timers.cancel); task.timers.soft = task.timers.hard = task.timers.cancel = null; }
 
 function finalizeTask(task, { event, status, reason, error }) {
@@ -110,6 +122,7 @@ function workerModelsMessage(message) {
   workers.set(message.workerId, worker);
   activeWorker.workerId = message.workerId;
   activeWorker.models = message.models || [];
+  activeWorker.workspaces = sanitizeWorkspaces(message.workspaces);
   runtimeSnapshotSequence = 0;
   console.log(`worker connected: ${message.workerId}`);
   workerStatus(worker.status, { workerId: message.workerId, models: activeWorker.models });
@@ -223,8 +236,10 @@ function onWorkerMessage(message) {
   }
   if (message.type === "task.failed") {
     const task = tasks.get(message.taskId);
-    if (task) finalizeTask(task, { event: "task.failed", status: "FAILED", reason: REASONS.OPENCODE_ERROR, error: message.error });
-    else broadcast(message);
+    if (task) {
+      const reason = typeof message.reason === "string" && REASONS[message.reason] ? message.reason : REASONS.OPENCODE_ERROR;
+      finalizeTask(task, { event: "task.failed", status: "FAILED", reason, error: message.error });
+    } else broadcast(message);
     return;
   }
   if (message.type === "task.interrupted") {
@@ -345,6 +360,7 @@ const server = createServer(async (req, res) => {
   const controlGet = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)$/);
   if (controlGet && req.method === "GET") { const control = controls.get(controlGet[1]); return control ? json(res, 200, publicControl(control)) : json(res, 404, { error: "Control not found" }); }
   if (url.pathname === "/api/models") return json(res, 200, { models: activeWorker?.models || [] });
+  if (url.pathname === "/api/workspaces") return json(res, 200, { workspaces: activeWorker?.workspaces || [] });
   if (url.pathname === "/api/events") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive" }); browserEvents.add(res); res.write(`event: mashang\ndata: ${JSON.stringify({ type: "worker.status", status: activeWorker ? "ONLINE" : "OFFLINE" })}\n\n`); req.on("close", () => browserEvents.delete(res)); return;
   }
@@ -359,15 +375,18 @@ const server = createServer(async (req, res) => {
     if (!session) return json(res, 404, { error: "Hub Session not found" });
     if (!activeWorker || activeWorker.readyState !== 1) return json(res, 503, { error: "Mac Worker is offline" });
     const input = await body(req);
+    const rawWorkspace = input.workspaceId;
+    const workspaceId = rawWorkspace == null || rawWorkspace === "" ? null : sanitizeWorkspaceId(rawWorkspace);
+    if (rawWorkspace != null && rawWorkspace !== "" && workspaceId === null) return json(res, 400, { error: "Invalid workspaceId" });
     session.turnCount = (session.turnCount || 0) + 1;
     const turnId = `turn_${String(session.turnCount).padStart(3, "0")}`;
-    const task = { taskId: `task_${randomUUID()}`, sessionId: session.id, conversationId: session.id, turnId, model: modelString(input.model), status: "SUBMITTING", hasText: false, artifactCount: 0, lastProgress: null, pendingCompletion: false, attemptCompletion: null, timers: {}, createdAt: Date.now() };
+    const task = { taskId: `task_${randomUUID()}`, sessionId: session.id, conversationId: session.id, turnId, model: modelString(input.model), workspaceId, status: "SUBMITTING", hasText: false, artifactCount: 0, lastProgress: null, pendingCompletion: false, attemptCompletion: null, timers: {}, createdAt: Date.now() };
     tasks.set(task.taskId, task);
     session.workerId = activeWorker.workerId;
-    createTurn({ conversationId: session.id, turnId, taskId: task.taskId, model: task.model });
+    createTurn({ conversationId: session.id, turnId, taskId: task.taskId, model: task.model, workspaceId });
     scheduleWatchdog(task);
-    console.log(`task created: ${task.taskId} conversation=${session.id} turn=${turnId}`);
-    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, sessionId: session.id, turnId, prompt: input.parts?.find((part) => part.type === "text")?.text || "", model: input.model });
+    console.log(`task created: ${task.taskId} conversation=${session.id} turn=${turnId} workspace=${workspaceId || "default"}`);
+    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, sessionId: session.id, turnId, prompt: input.parts?.find((part) => part.type === "text")?.text || "", model: input.model, workspaceId });
     if (!dispatched) { console.log(`task dispatch failed: ${task.taskId} session=${session.id}`); finalizeTask(task, { event: "task.failed", status: "FAILED", reason: REASONS.OPENCODE_ERROR, error: "Mac Worker is offline" }); return json(res, 503, { error: "Mac Worker is offline", taskId: task.taskId }); }
     console.log(`task dispatched to worker: ${task.taskId} session=${session.id} worker=${activeWorker.workerId}`);
     return json(res, 202, publicTask(task));

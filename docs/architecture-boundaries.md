@@ -26,7 +26,9 @@ Hub 可以理解并管理以下通用对象：
 - Artifact
 - Timeout / Cancel / Terminal State
 
-Hub 可以依赖稳定的协议字段，例如 `taskId`、`turnId`、`conversationId`、`model`、`status` 和 `artifactId`。
+Hub 可以依赖稳定的协议字段，例如 `taskId`、`turnId`、`conversationId`、`model`、`status`、`workspaceId` 和 `artifactId`。
+
+`workspaceId` 是不透明标识：Hub 只校验长度与字符集并原样传递，不解析它的业务含义，也不接收本地路径。`workspaceId` 到本地目录的映射只存在于 Worker 的本地 workspace registry。
 
 ## Hub Must Not Understand
 

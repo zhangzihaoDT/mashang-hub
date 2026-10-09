@@ -8,6 +8,7 @@ import { resolveLocalArtifact } from "./artifact-resolver.mjs";
 import { buildRegistry } from "./runtime/registry.mjs";
 import { buildRuntimeSnapshot } from "./runtime/protocol.mjs";
 import { executeControl } from "./runtime/control.mjs";
+import { buildWorkspaces, resolveWorkspace, publicWorkspaceList, DEFAULT_WORKSPACE_ID } from "./workspaces.mjs";
 import { timeoutConfig } from "../server/task-timeout.mjs";
 
 const hubURL = process.env.HUB_URL;
@@ -17,11 +18,14 @@ const opencodeURL = process.env.OPENCODE_URL || "http://127.0.0.1:4096";
 const projectRoot = process.env.MASHANG_SERVICE_ROOT;
 const heartbeatMs = Number(process.env.WORKER_HEARTBEAT_MS || 10000);
 const stateFile = process.env.WORKER_STATE_FILE || `${homedir()}/.mashang-hub/worker-state.json`;
-const artifactOutputRoots = ["outputs", "mashang_workspace/outputs"];
+const workspaces = buildWorkspaces(process.env);
+const defaultWorkspace = resolveWorkspace(workspaces, DEFAULT_WORKSPACE_ID);
 const mappings = new Map();
 const localArtifacts = new Map();
 const activeTasks = new Map();
 const sessionToTask = new Map();
+const sessionWorkspace = new Map();
+const permissionSession = new Map();
 const progressSeen = new Map();
 let socket;
 let eventReader;
@@ -48,13 +52,20 @@ function loadRuntimeConfig(path) {
   }
 }
 
-async function loadMappings() { try { const data = JSON.parse(await readFile(stateFile, "utf8")); for (const [hubSessionId, openCodeSessionId] of Object.entries(data.mappings || {})) mappings.set(hubSessionId, openCodeSessionId); } catch { /* First run has no mapping file. */ } }
+async function loadMappings() { try { const data = JSON.parse(await readFile(stateFile, "utf8")); for (const [key, openCodeSessionId] of Object.entries(data.mappings || {})) mappings.set(mappingId(key), openCodeSessionId); } catch { /* First run has no mapping file. */ } }
 async function saveMappings() { try { await mkdir(dirname(stateFile), { recursive: true }); } catch { /* Parent may already exist. */ } try { await writeFile(stateFile, JSON.stringify({ mappings: Object.fromEntries(mappings) }, null, 2), "utf8"); } catch { /* Mapping persistence is best effort. */ } }
 
+// A Hub Session maps to one OpenCode Session per workspace, because each
+// workspace is a different OpenCode project directory.
+const MAPPING_SEPARATOR = "::";
+function sessionMappingKey(workspaceId, sessionId) { return `${workspaceId}${MAPPING_SEPARATOR}${sessionId}`; }
+function mappingId(key) { return key.includes(MAPPING_SEPARATOR) ? key : sessionMappingKey(DEFAULT_WORKSPACE_ID, key); }
+
 async function openCode(path, options = {}) {
+  const { directory = defaultWorkspace?.root || projectRoot, ...rest } = options;
   const url = new URL(path, opencodeURL);
-  if (!url.searchParams.has("directory")) url.searchParams.set("directory", projectRoot);
-  return fetch(url, { ...options, headers: { "content-type": "application/json", "x-opencode-directory": projectRoot, ...(options.headers || {}) } });
+  if (!url.searchParams.has("directory")) url.searchParams.set("directory", directory);
+  return fetch(url, { ...rest, headers: { "content-type": "application/json", "x-opencode-directory": directory, ...(rest.headers || {}) } });
 }
 async function openCodeJSON(path, options = {}) { const response = await openCode(path, options); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || `OpenCode HTTP ${response.status}`); return data; }
 function send(message) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
@@ -69,10 +80,10 @@ function modelList(data) {
     { key: "luna", label: "GPT-5.6 Luna", available: Boolean(luna), providerID: luna?.providerID, modelID: luna?.id, actualName: luna?.name },
   ];
 }
-async function detectArtifacts(text, taskId) {
+async function detectArtifacts(text, taskId, workspace) {
   const pattern = /(?:^|[\s"'`(：:])([^\s"'`<>(),;]+\.(?:md|html|csv|png))(?=$|[\s"'`<>(),;])/giu;
   for (const match of text.matchAll(pattern)) {
-    const artifact = await resolveLocalArtifact(match[1], projectRoot, artifactOutputRoots); if (!artifact) { console.log("artifact candidate rejected"); continue; }
+    const artifact = await resolveLocalArtifact(match[1], workspace.root, workspace.outputRoots); if (!artifact) { console.log("artifact candidate rejected"); continue; }
     console.log("artifact candidate accepted");
     const artifactId = `artifact_${randomUUID()}`; localArtifacts.set(artifactId, artifact);
     send({ type: "artifact.created", artifactId, taskId, name: artifact.name, extension: artifact.extension, mimeType: artifact.mimeType, artifactType: artifact.type, size: artifact.size, path: artifact.path });
@@ -97,12 +108,18 @@ async function listenOpenCodeEvents() {
     const response = await openCode("/event", { headers: { accept: "text/event-stream" } }); if (!response.ok || !response.body) throw new Error(`event HTTP ${response.status}`);
     console.log("opencode connected"); send({ type: "worker.status", workerId, status: busy ? "BUSY" : "ONLINE", opencode: "CONNECTED" }); await publishRegistration();
     eventReader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); if (type.includes("permission")) send({ type: "permission.requested", requestId: event.properties?.id || event.properties?.permissionID, request: event.properties }); else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
+    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); if (type.includes("permission")) { const requestId = event.properties?.id || event.properties?.permissionID; const openCodeSessionId = event.properties?.sessionID; if (requestId && openCodeSessionId) permissionSession.set(requestId, openCodeSessionId); send({ type: "permission.requested", requestId, request: event.properties }); } else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
   } catch { send({ type: "worker.status", workerId, status: "ERROR", opencode: "DISCONNECTED" }); setTimeout(listenOpenCodeEvents, 3000); }
   finally { listening = false; }
 }
 async function handleTask(task) {
   console.log(`task received: ${task.taskId}`);
+  const workspace = resolveWorkspace(workspaces, task.workspaceId);
+  if (!workspace) {
+    console.warn(`task rejected: ${task.taskId} unknown workspace`);
+    send({ type: "task.failed", taskId: task.taskId, sessionId: task.sessionId, error: "Unknown workspace", reason: "UNKNOWN_WORKSPACE" });
+    return;
+  }
   const controller = new AbortController();
   const record = { controller, openCodeSessionId: null, source: null };
   activeTasks.set(task.taskId, record);
@@ -110,19 +127,21 @@ async function handleTask(task) {
   busy += 1;
   send({ type: "task.accepted", taskId: task.taskId, sessionId: task.sessionId }); console.log(`task accepted: ${task.taskId}`);
   send({ type: "task.running", taskId: task.taskId, sessionId: task.sessionId });
+  const mappingKey = sessionMappingKey(workspace.id, task.sessionId);
   try {
-    let openCodeSessionId = mappings.get(task.sessionId);
-    if (!openCodeSessionId) { const session = await openCodeJSON("/session", { method: "POST", body: JSON.stringify({ title: "mashang-hub" }) }); openCodeSessionId = session.id; mappings.set(task.sessionId, openCodeSessionId); await saveMappings(); }
+    let openCodeSessionId = mappings.get(mappingKey);
+    if (!openCodeSessionId) { const session = await openCodeJSON("/session", { method: "POST", directory: workspace.root, body: JSON.stringify({ title: `mashang-hub:${workspace.id}` }) }); openCodeSessionId = session.id; mappings.set(mappingKey, openCodeSessionId); await saveMappings(); }
     send({ type: "session.mapped", sessionId: task.sessionId, taskId: task.taskId, openCodeSessionId });
     record.openCodeSessionId = openCodeSessionId;
+    sessionWorkspace.set(openCodeSessionId, workspace.root);
     sessionToTask.set(openCodeSessionId, task.taskId);
     send({ type: "opencode.request.sent", taskId: task.taskId, sessionId: task.sessionId, openCodeSessionId });
-    console.log(`opencode request started: ${task.taskId}`);
-    const response = await openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", body: JSON.stringify({ model: task.model, parts: [{ type: "text", text: task.prompt }] }), signal: controller.signal });
+    console.log(`opencode request started: ${task.taskId} workspace=${workspace.id}`);
+    const response = await openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", directory: workspace.root, body: JSON.stringify({ model: task.model, parts: [{ type: "text", text: task.prompt }] }), signal: controller.signal });
     sessionToTask.delete(openCodeSessionId);
     send({ type: "opencode.response.received", taskId: task.taskId, sessionId: task.sessionId, openCodeSessionId });
     const text = (response.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n");
-    await detectArtifacts(text, task.taskId);
+    await detectArtifacts(text, task.taskId, workspace);
     send({ type: "agent.message.completed", taskId: task.taskId, sessionId: task.sessionId, text, actualModel: { providerID: response.info?.providerID, modelID: response.info?.modelID, cost: response.info?.cost, tokens: response.info?.tokens } });
     send({ type: "task.completed", taskId: task.taskId, sessionId: task.sessionId }); console.log(`task completed: ${task.taskId}`);
   } catch (error) {
@@ -147,7 +166,7 @@ async function publishRegistration() {
   let models = []; let status = busy ? "BUSY" : "ONLINE";
   try { models = modelList(await openCodeJSON("/config/providers")); }
   catch (error) { status = "ERROR"; send({ type: "worker.status", workerId, status, error: error.message }); }
-  send({ type: "worker.register", workerId, status, models });
+  send({ type: "worker.register", workerId, status, models, workspaces: publicWorkspaceList(workspaces) });
 }
 async function publishRuntimeSnapshot() {
   if (socket?.readyState !== WebSocket.OPEN || runtimePublishing) return;
@@ -185,11 +204,16 @@ function handleControlCancel(message) {
   const controller = activeControls.get(message.controlId);
   if (controller) controller.abort();
 }
+function handlePermissionReply(message) {
+  const openCodeSessionId = permissionSession.get(message.requestId);
+  const directory = sessionWorkspace.get(openCodeSessionId) || defaultWorkspace?.root || projectRoot;
+  openCode(`/permission/${encodeURIComponent(message.requestId)}/reply`, { method: "POST", directory, body: JSON.stringify({ response: message.response }) }).catch(() => {});
+}
 async function register() { runtimeSequence = 0; await publishRegistration(); listenOpenCodeEvents(); publishRuntimeSnapshot(); }
 function connect() {
   const url = new URL(hubURL); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = "/worker";
   socket = new WebSocket(url, { headers: { Authorization: `Bearer ${workerSecret}` } });
-  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") openCode(`/permission/${encodeURIComponent(message.requestId)}/reply`, { method: "POST", body: JSON.stringify({ response: message.response }) }).catch(() => {}); } catch { /* Keep worker alive on malformed control messages. */ } });
+  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") handlePermissionReply(message); } catch { /* Keep worker alive on malformed control messages. */ } });
   socket.on("close", () => setTimeout(connect, 2000)); socket.on("error", () => socket.close());
 }
 await loadMappings(); setInterval(heartbeat, heartbeatMs); setInterval(publishRuntimeSnapshot, runtimeSnapshotMs); connect();

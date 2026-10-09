@@ -17,7 +17,7 @@ function write(line) {
 
 function nowISO() { return new Date().toISOString(); }
 
-export function createTurn({ conversationId, turnId, taskId, model }) {
+export function createTurn({ conversationId, turnId, taskId, model, workspaceId = null }) {
   const now = nowISO();
   const root = {
     record: "turn",
@@ -26,6 +26,7 @@ export function createTurn({ conversationId, turnId, taskId, model }) {
     taskId,
     openCodeSessionId: null,
     model,
+    workspaceId: workspaceId || null,
     status: "SUBMITTING",
     startedAt: now,
     lastEventAt: now,
