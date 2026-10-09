@@ -7,7 +7,7 @@ function $(selector) {
   return element;
 }
 function optional(selector) { return document.querySelector(selector); }
-const state = { session: null, connected: false, status: "IDLE", workerStatus: "OFFLINE", taskState: "IDLE", activeTaskId: null, turnId: null, openCodeSessionId: null, events: [], lastRequest: null, lastResponse: null, messages: [], assistantText: "", artifactScanText: "", artifacts: [], models: [], selectedModel: null };
+const state = { session: null, connected: false, status: "IDLE", workerStatus: "OFFLINE", taskState: "IDLE", activeTaskId: null, turnId: null, openCodeSessionId: null, events: [], lastRequest: null, lastResponse: null, messages: [], assistantText: "", artifactScanText: "", artifacts: [], models: [], selectedModel: null, turnActive: false, pendingPermission: null };
 
 const TASK_LABELS = { IDLE: "等待输入", SUBMITTING: "正在提交", UNDERSTANDING: "正在理解请求", PLANNING: "正在规划", RUNNING: "正在分析", RENDERING: "正在整理结果", COMPLETED: "分析完成", FAILED: "执行失败", INTERRUPTED: "执行中断", TIMEOUT: "执行超时", CANCELLED: "已取消", WAITING_PERMISSION: "等待权限", ERROR: "连接错误" };
 
@@ -45,21 +45,53 @@ function markdown(value = "") {
 function sessionName(session) { return session?.title || session?.name || session?.id?.slice(0, 16) || "未创建"; }
 function updateSendAvailability() { $("#send").disabled = !state.connected || !state.selectedModel?.available; }
 function setConnection(connected, status = state.workerStatus) { state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); }
-function setStatus(status, label) { state.status = status; const el = $("#runState"); el.className = `run-state ${status.toLowerCase()}`; el.querySelector("span:last-child").textContent = label || TASK_LABELS[status] || status; }
+function setStatus(status, label) { state.status = status; const el = $("#runState"); el.className = `run-state ${status.toLowerCase()}`; el.querySelector("span:last-child").textContent = label || TASK_LABELS[status] || status; if (state.turnActive) recordProcess(status, label); }
 function setStatusLabel(label) { const el = optional("#runState"); if (el) el.querySelector("span:last-child").textContent = label; }
 function isTerminalState() { return ["COMPLETED", "FAILED", "INTERRUPTED", "TIMEOUT", "CANCELLED"].includes(state.taskState); }
 function updateCancelVisibility() { const button = optional("#cancel"); if (!button) return; button.classList.toggle("hidden", !state.activeTaskId || isTerminalState()); }
-function applyTaskEvent(taskId, type) {
+function applyTaskEvent(taskId, type, label) {
   const result = transitionTaskState({ taskId: state.activeTaskId, status: state.taskState }, { taskId, type });
   if (result.taskId === state.activeTaskId && result.status === state.taskState) return false;
   state.activeTaskId = result.taskId;
   state.taskState = result.status;
-  setStatus(result.status);
+  setStatus(result.status, label);
   updateCancelVisibility();
   return true;
 }
 function renderSession() { $("#sessionMeta").textContent = state.session ? `Session: ${sessionName(state.session)}  ·  ${state.selectedModel ? `${state.selectedModel.providerID}/${state.selectedModel.modelID}` : "OpenCode"}` : "未创建 Session"; }
-function renderMessages() { const container = $("#messages"); const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80; container.innerHTML = state.messages.length ? state.messages.map((item) => `<div class="message ${item.role}"><div class="label">${item.role === "user" ? "You" : "Assistant"}</div><div class="bubble">${item.role === "user" ? escapeHTML(item.text) : markdown(item.text)}${item.role === "assistant" && item.model ? `<div class="message-meta">${escapeHTML(item.model.label || item.model.modelID || "OpenCode")}</div>` : ""}</div></div>`).join("") : `<div class="welcome"><img class="avatar" src="/raccoon.png" width="42" height="42" alt="mashang" /><h2>今天想先看什么？</h2><p>把问题交给 OpenCode。它会沿用当前 Session，调用本机已有能力。</p></div>`; if (nearBottom) container.scrollTop = container.scrollHeight; }
+function renderMessage(item) {
+  if (item.role === "user") return `<div class="message user"><div class="label">You</div><div class="bubble">${escapeHTML(item.text)}</div></div>`;
+  if (item.kind === "notice") return `<div class="message assistant notice ${escapeHTML(item.level || "info")}"><div class="label">System</div><div class="bubble">${escapeHTML(item.text)}</div></div>`;
+  const steps = (item.steps || []).map((step) => `<li class="step ${escapeHTML(step.status)}"><span class="step-dot"></span><span>${escapeHTML(step.label)}</span></li>`).join("");
+  const meta = item.model ? `<div class="message-meta">${escapeHTML(item.model.label || item.model.modelID || "OpenCode")}</div>` : "";
+  return `<div class="message assistant process"><div class="label">Assistant</div><ul class="process-steps">${steps}</ul>${meta}</div>`;
+}
+function permissionHTML() {
+  const request = state.pendingPermission || {};
+  return `<div class="permission"><strong>OpenCode 请求执行</strong><code>${escapeHTML(JSON.stringify(request.request || {}))}</code><div class="permission-actions"><button data-choice="once">允许一次</button><button data-choice="reject">拒绝</button></div></div>`;
+}
+function renderMessages() {
+  const container = $("#messages");
+  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+  const body = state.messages.length ? state.messages.map(renderMessage).join("") : `<div class="welcome"><img class="avatar" src="/raccoon.png" width="42" height="42" alt="mashang" /><h2>今天想先看什么？</h2><p>把问题交给 OpenCode。它会沿用当前 Session，调用本机已有能力。</p></div>`;
+  container.innerHTML = body + (state.pendingPermission ? permissionHTML() : "");
+  if (nearBottom) container.scrollTop = container.scrollHeight;
+}
+function currentProcessMessage() { const last = state.messages[state.messages.length - 1]; return last && last.role === "assistant" && last.kind === "process" ? last : null; }
+function ensureProcessMessage() { let message = currentProcessMessage(); if (!message) { message = { role: "assistant", kind: "process", steps: [], model: null }; state.messages.push(message); } return message; }
+function processStepStatus(status) { if (status === "COMPLETED") return "done"; if (["FAILED", "TIMEOUT", "CANCELLED", "INTERRUPTED", "ERROR"].includes(status)) return "error"; return "running"; }
+function recordProcess(status, label) {
+  const text = label || TASK_LABELS[status] || status;
+  const message = ensureProcessMessage();
+  const previous = message.steps[message.steps.length - 1];
+  if (previous && previous.label === text) return;
+  message.steps.forEach((step) => { if (step.status === "running") step.status = "done"; });
+  message.steps.push({ label: text, status: processStepStatus(status) });
+  renderMessages();
+}
+function pushProcessNote(label) { const message = ensureProcessMessage(); message.steps.push({ label, status: "note" }); renderMessages(); }
+function updateRunningLabel(label) { const message = currentProcessMessage(); const step = message?.steps[message.steps.length - 1]; if (!step || step.status !== "running" || step.label === label) return; step.label = label; renderMessages(); }
+function pushNotice(text, level = "error") { state.messages.push({ role: "assistant", kind: "notice", text, level }); renderMessages(); }
 function renderResult(text) { $("#resultContent").innerHTML = text ? markdown(text) : `<div class="empty-result"><span>◌</span><p>完成一次提问后，结果会显示在这里。</p></div>`; }
 function artifactCandidates(text = "") { const pattern = /(?:^|[\s"'`(])((?:[\p{L}\p{N}_.-]+\/)+[\p{L}\p{N}_.-]+\.(?:md|html|csv|png))(?=$|[\s"'`),.;])/gu; return [...text.matchAll(pattern)].map((match) => match[1]); }
 function formatBytes(bytes) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
@@ -82,6 +114,7 @@ async function previewArtifact(card, artifact) {
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 optional("#artifacts")?.addEventListener("click", (event) => { const button = event.target.closest("[data-action='preview']"); if (!button) return; const card = button.closest(".artifact-card"); previewArtifact(card, state.artifacts[Number(card.dataset.index)]); });
+$("#messages").addEventListener("click", async (event) => { const button = event.target.closest("[data-choice]"); if (!button || !state.pendingPermission) return; const choice = button.dataset.choice; const id = state.pendingPermission.id; state.pendingPermission = null; renderMessages(); try { if (id) await api(`/api/permissions/${encodeURIComponent(id)}/reply`, { method: "POST", body: JSON.stringify({ response: choice }) }); if (!isTerminalState()) setStatus("RUNNING", "正在分析"); } catch { /* keep UI responsive */ } });
 function logEvent(event) { const previous = state.events[state.events.length - 1]; if (event.type === "worker.status" && previous?.type === "worker.status" && previous.workerId === event.workerId && previous.status === event.status) return; state.events.push(event); if (state.events.length > 100) state.events.shift(); renderDebug(); }
 function renderDebug() { const panel = optional("#debugContent"); if (!panel) return; const last = state.events[state.events.length - 1]; panel.innerHTML = `<dl><dt>Conversation ID</dt><dd>${escapeHTML(state.session?.id || "-")}</dd><dt>Turn ID</dt><dd>${escapeHTML(state.turnId || "-")}</dd><dt>Task ID</dt><dd>${escapeHTML(state.activeTaskId || "-")}</dd><dt>OpenCode Session</dt><dd>${escapeHTML(state.openCodeSessionId || "-")}</dd><dt>Model</dt><dd>${escapeHTML(state.selectedModel ? `${state.selectedModel.providerID}/${state.selectedModel.modelID}` : "-")}</dd><dt>Status</dt><dd>${state.taskState}</dd><dt>Last Event</dt><dd>${escapeHTML(last?.type || "-")}</dd><dt>Events (${state.events.length})</dt></dl><pre>${escapeHTML(JSON.stringify(state.events.slice(-12), null, 2))}</pre>`; }
 
@@ -113,7 +146,7 @@ async function loadModels() {
   catch { $("#modelSelect").innerHTML = "<option>Models unavailable</option>"; $("#modelSelect").disabled = true; state.selectedModel = null; updateSendAvailability(); }
 }
 $("#modelSelect").addEventListener("change", () => { state.selectedModel = state.models.find((model) => model.key === $("#modelSelect").value) || null; renderSession(); updateSendAvailability(); });
-async function refreshConnection() { try { await api("/api/health"); setConnection(true); } catch { setConnection(false); setStatus("ERROR", "OpenCode Server 未运行"); $("#resultContent").innerHTML = `<div class="empty-result"><span>!</span><h3>OpenCode Server 未运行</h3><p>请在另一个 Terminal 启动：</p><pre>cd ~/Documents/github/mashang-service\nopencode serve --hostname 127.0.0.1 --port 4096</pre></div>`; } }
+async function refreshConnection() { try { await api("/api/health"); setConnection(true); } catch { setConnection(false); setStatus("ERROR", "OpenCode Server 未运行"); pushNotice("OpenCode Server 未运行。请在另一个 Terminal 启动：opencode serve --hostname 127.0.0.1 --port 4096"); } }
 async function ensureSession() {
   const sessions = await api("/api/sessions");
   const savedID = localStorage.getItem("mashang-hub-session");
@@ -127,7 +160,7 @@ function actualModel(info) { const modelID = info?.modelID || info?.model?.id; c
 async function sendPrompt(text) {
   state.messages.push({ role: "user", text });
   state.assistantText = ""; state.artifactScanText = ""; state.artifacts = [];
-  state.activeTaskId = null; state.taskState = "UNDERSTANDING";
+  state.activeTaskId = null; state.taskState = "UNDERSTANDING"; state.turnActive = true; state.pendingPermission = null;
   renderMessages(); renderResult(""); renderArtifacts(); setStatus("UNDERSTANDING"); updateCancelVisibility(); $("#send").disabled = true;
   try {
     if (!state.session) await ensureSession();
@@ -137,46 +170,48 @@ async function sendPrompt(text) {
     renderDebug();
     const answer = parseMessage(response) || response?.text || response?.message?.text;
     if (answer) completeAssistant(answer, actualModel(response.info));
-  } catch (error) { state.taskState = "FAILED"; state.activeTaskId = state.activeTaskId || `local_${Date.now()}`; setStatus("FAILED", error.message); state.messages.push({ role: "assistant", text: `无法提交任务：${error.message}` }); renderMessages(); renderResult(`任务提交失败：${error.message}`); updateCancelVisibility(); }
-  finally { updateSendAvailability(); }
+  } catch (error) {
+    state.taskState = "FAILED"; state.activeTaskId = state.activeTaskId || `local_${Date.now()}`;
+    setStatus("FAILED", `任务提交失败：${error.message}`); state.turnActive = false;
+    renderResult(""); updateCancelVisibility();
+  } finally { updateSendAvailability(); }
 }
-function completeAssistant(text, model) { const actual = model?.modelID ? actualModel(model) : model; state.assistantText = text; const last = state.messages[state.messages.length - 1]; if (last?.role === "assistant") { last.text = text; last.model = actual; } else state.messages.push({ role: "assistant", text, model: actual }); renderMessages(); renderResult(text); }
+function completeAssistant(text, model) { const actual = model?.modelID ? actualModel(model) : model; state.assistantText = text; const message = ensureProcessMessage(); if (actual) message.model = actual; recordProcess("COMPLETED"); state.turnActive = false; renderResult(text); }
 function handleTerminal(event) {
-  const changed = applyTaskEvent(event.taskId, event.type);
-  if (!changed) return;
   const label = { "task.failed": event.error || "执行失败", "task.timeout": "执行超时", "task.cancelled": "已取消", "task.interrupted": "执行中断" }[event.type];
-  setStatus(state.taskState, label);
-  state.messages.push({ role: "assistant", text: `任务未完成：${event.error || label}` });
-  renderMessages(); renderResult(`任务未完成：${event.error || label}`);
+  const changed = applyTaskEvent(event.taskId, event.type, label);
+  if (!changed) return;
+  state.turnActive = false;
+  renderResult("");
   updateCancelVisibility();
 }
-function showPermission(request) { if (isTerminalState()) return; setStatus("WAITING_PERMISSION", "等待权限"); const box = document.createElement("div"); box.className = "permission"; box.innerHTML = `<strong>OpenCode 请求执行</strong><br><code>${escapeHTML(JSON.stringify(request))}</code><br><button data-choice="once">允许一次</button><button data-choice="reject">拒绝</button>`; $("#resultBody").prepend(box); box.addEventListener("click", async (event) => { const choice = event.target.dataset.choice; if (!choice) return; const id = request.id || request.permissionID || request.requestID; if (id) await api(`/api/permissions/${encodeURIComponent(id)}/reply`, { method: "POST", body: JSON.stringify({ response: choice }) }); box.remove(); if (!isTerminalState()) setStatus("RUNNING", "正在分析"); }); }
+function showPermission(request) { if (isTerminalState()) return; state.pendingPermission = request; setStatus("WAITING_PERMISSION", "等待权限"); renderMessages(); }
 function connectEvents() { const stream = new EventSource("/api/events"); stream.addEventListener("mashang", (message) => { const event = JSON.parse(message.data); logEvent(event);
   if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); return; }
   if (event.type === "worker.status") { state.models = event.models || state.models; if (event.models) renderModelOptions(event.models); setConnection(["ONLINE", "BUSY"].includes(event.status), event.status); return; }
   if (event.type === "session.mapped") { state.openCodeSessionId = event.openCodeSessionId; renderDebug(); return; }
-  if (event.type === "task.timeout.warning") { if (!isTerminalState()) setStatusLabel("运行超时，正在尝试取消"); return; }
+  if (event.type === "task.timeout.warning") { if (!isTerminalState()) { setStatusLabel("运行超时，正在尝试取消"); updateRunningLabel("运行超时，正在尝试取消"); } return; }
   if (event.type === "task.accepted") { applyTaskEvent(event.taskId, "task.accepted"); return; }
   if (event.type === "task.running") { applyTaskEvent(event.taskId, "task.running"); return; }
-  if (event.type === "agent.message.delta" && event.taskId === state.activeTaskId) { state.assistantText += event.text || ""; renderResult(state.assistantText); return; }
-  if (event.type === "agent.message.completed" && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, "agent.message.completed"); completeAssistant(event.text || "", event.actualModel); return; }
-  if (event.type === "task.completed") { if (applyTaskEvent(event.taskId, "task.completed")) setStatus("COMPLETED"); return; }
+  if (event.type === "agent.message.delta" && event.taskId === state.activeTaskId) { state.assistantText += event.text || ""; updateRunningLabel("正在生成结果"); return; }
+  if (event.type === "agent.message.completed" && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, "agent.message.completed"); completeAssistant(event.text || state.assistantText, event.actualModel); return; }
+  if (event.type === "task.completed") { if (applyTaskEvent(event.taskId, "task.completed")) state.turnActive = false; return; }
   if (["task.failed", "task.timeout", "task.cancelled", "task.interrupted"].includes(event.type)) { handleTerminal(event); return; }
-  if (event.type === "artifact.created") { state.artifacts = [...state.artifacts.filter((artifact) => artifact.artifactId !== event.artifactId), { ...event, preview: "" }]; renderArtifacts(); return; }
-  if (event.type === "permission.requested") { showPermission({ ...(event.request || {}), id: event.requestId }); return; }
+  if (event.type === "artifact.created") { state.artifacts = [...state.artifacts.filter((artifact) => artifact.artifactId !== event.artifactId), { ...event, preview: "" }]; renderArtifacts(); pushProcessNote(`已生成 ${event.name || event.path || "文件"}`); return; }
+  if (event.type === "permission.requested") { showPermission({ id: event.requestId, request: event.request || {} }); return; }
 }); stream.onerror = () => { setConnection(false, "OFFLINE"); setTimeout(connectEvents, 2500); stream.close(); }; }
 
-optional("#cancel")?.addEventListener("click", async () => { if (!state.activeTaskId || isTerminalState()) return; try { await api(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/cancel`, { method: "POST" }); if (!isTerminalState()) setStatusLabel("正在取消…"); } catch (error) { setStatusLabel(`取消失败：${error.message}`); } });
+optional("#cancel")?.addEventListener("click", async () => { if (!state.activeTaskId || isTerminalState()) return; try { await api(`/api/tasks/${encodeURIComponent(state.activeTaskId)}/cancel`, { method: "POST" }); if (!isTerminalState()) { setStatusLabel("正在取消…"); updateRunningLabel("正在取消…"); } } catch (error) { setStatusLabel(`取消失败：${error.message}`); } });
 function autosizePrompt() { const input = optional("#prompt"); if (!input) return; input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 140)}px`; }
 function syncKeyboardInset() { const vv = window.visualViewport; if (!vv) return; const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)); document.documentElement.style.setProperty("--keyboard-inset", `${inset}px`); document.body.classList.toggle("keyboard-open", inset > 80); }
 const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches;
-$("#promptForm").addEventListener("submit", (event) => { event.preventDefault(); const input = $("#prompt"); const text = input.value.trim(); if (!text) return; input.value = ""; autosizePrompt(); sendPrompt(text).catch((error) => { state.taskState = "FAILED"; setStatus("FAILED", error.message); state.messages.push({ role: "assistant", text: `无法提交任务：${error.message}` }); renderMessages(); }); });
+$("#promptForm").addEventListener("submit", (event) => { event.preventDefault(); const input = $("#prompt"); const text = input.value.trim(); if (!text) return; input.value = ""; autosizePrompt(); sendPrompt(text).catch((error) => { state.taskState = "FAILED"; state.turnActive = false; setStatus("FAILED", `任务提交失败：${error.message}`); pushNotice(`无法提交任务：${error.message}`); }); });
 $("#prompt").addEventListener("input", autosizePrompt);
 $("#prompt").addEventListener("keydown", (event) => { if (event.key !== "Enter") return; if (coarsePointer && !event.metaKey && !event.ctrlKey) return; if (!event.shiftKey) { event.preventDefault(); $("#promptForm").requestSubmit(); } });
 if (window.visualViewport) { visualViewport.addEventListener("resize", syncKeyboardInset); visualViewport.addEventListener("scroll", syncKeyboardInset); }
 window.addEventListener("orientationchange", () => setTimeout(syncKeyboardInset, 300));
 autosizePrompt();
-$("#newSession").addEventListener("click", async () => { state.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "mashang-hub" }) }); localStorage.setItem("mashang-hub-session", state.session.id); state.messages = []; state.artifacts = []; state.artifactScanText = ""; state.activeTaskId = null; state.taskState = "IDLE"; state.turnId = null; state.openCodeSessionId = null; renderSession(); renderMessages(); renderResult(""); renderArtifacts(); setStatus("IDLE"); updateCancelVisibility(); renderDebug(); });
+$("#newSession").addEventListener("click", async () => { state.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "mashang-hub" }) }); localStorage.setItem("mashang-hub-session", state.session.id); state.messages = []; state.artifacts = []; state.artifactScanText = ""; state.activeTaskId = null; state.taskState = "IDLE"; state.turnId = null; state.openCodeSessionId = null; state.turnActive = false; state.pendingPermission = null; renderSession(); renderMessages(); renderResult(""); renderArtifacts(); setStatus("IDLE"); updateCancelVisibility(); renderDebug(); });
 optional("#debugToggle")?.addEventListener("click", () => optional("#debug")?.classList.toggle("hidden")); optional("#debugClose")?.addEventListener("click", () => optional("#debug")?.classList.add("hidden"));
 const runtimeUI = initRuntimeUI();
 async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); connectEvents(); }
