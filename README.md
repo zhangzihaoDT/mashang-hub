@@ -324,3 +324,5 @@ Worker 将执行 claim 和结果 outbox 持久化到 `WORKER_EXECUTION_JOURNAL`�
 更新 Hub 与 Worker 后才能获得完整恢复语义；旧 Worker 保持兼容但无法提供可信对账。Hub 数据库和 Worker journal 均需持久化、定期备份；损坏 journal 会拒绝启动。当前 Worker journal 包含本地结果正文且无自动清理，需保持目录私有。Artifact 下载注册表仍只在 Worker 内存，重启后的历史文件下载尚未恢复。
 
 `npm run test:long-task` 使用真实 Hub/Worker 进程和 Mock OpenCode，持续 185 秒并在期间重启 Hub，验证原执行身份与单次调用。当前完成的是 Agent 长任务与恢复纵向场景；通用排队、后台任务列表和 External Action 正式接入仍待后续验收。
+
+P3 的环境与签名授权要求见 [Publishing 隔离方案](docs/publishing-isolation.md)。尚未建立隔离账户、迁移凭证、启用正式发布或进行真实发布。
