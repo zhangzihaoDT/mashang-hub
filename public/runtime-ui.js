@@ -3,7 +3,6 @@ const SERVICE_STATES = {
   OFFLINE: { label: "离线", cls: "offline" },
   UNKNOWN: { label: "未知", cls: "unknown" },
 };
-const DEPENDENCY_STATES = SERVICE_STATES;
 const JOB_STATES = {
   COMPLETED: { label: "Completed", cls: "completed" },
   FAILED: { label: "Failed", cls: "failed" },
@@ -16,6 +15,9 @@ const OPERATION_STATES = {
   CANCELLED: { label: "已取消", cls: "failed" },
 };
 const CONTROL_STATES = {
+  UNKNOWN: { label: '待核验', cls: 'unknown' },
+  PENDING_APPROVAL: { label: '待审阅最终正文', cls: 'running' },
+  APPROVED: { label: '已批准', cls: 'running' },
   INTERRUPTED: { label: "等待执行对账", cls: "unknown" },
   UNCERTAIN: { label: "结果待核对", cls: "unknown" },
   AWAITING_PERMISSION: { label: "待审批", cls: "running" },
@@ -57,18 +59,12 @@ function formatClockTime(value) {
  * POST /api/runtime/controls/:id/decision; live updates arrive over SSE.
  */
 export function initRuntimeUI() {
-  const panel = document.getElementById("runtime");
-  const body = document.getElementById("runtimeBody");
-  const meta = document.getElementById("runtimeMeta");
-  const stateEl = document.getElementById("runtimeState");
-  const workerIdEl = document.getElementById("runtimeWorkerId");
-  const toggle = document.getElementById("runtimeToggle");
-  const close = document.getElementById("runtimeClose");
-  if (!panel || !body || !meta) return { update() {}, open() {} };
-
+  const conversationMount = document.getElementById("conversationRuntime");
+  const independentMount = document.getElementById("independentRuntime");
+  let workspace = "service";
+  let controlError = "";
   let snapshot = null;
   let workerOnline = false;
-  let receivedAt = null;
   const controls = new Map();
 
   function targetLabel(targetId) {
@@ -113,9 +109,23 @@ export function initRuntimeUI() {
     const summary = service.summary ? `<span class="rt-sub">${escapeHTML(service.summary)}</span>` : "";
     return `<li class="rt-item"><span class="rt-dot ${state.cls}" role="img" aria-label="${state.label}"></span><div class="rt-main"><strong>${label}</strong>${summary}</div><div class="rt-actions">${actions}</div></li>`;
   }
-  function dependencyItem(dependency) {
-    const state = stateOf(DEPENDENCY_STATES, dependency.status);
-    return `<li class="rt-item"><span class="rt-dot ${state.cls}" role="img" aria-label="${state.label}"></span><div class="rt-main"><strong>${escapeHTML(dependency.label || dependency.id)}</strong></div></li>`;
+  const SNAPSHOT_MAX_AGE_MS = 60000;
+  function snapshotStale() {
+    const time = Date.parse(snapshot?.generatedAt);
+    return !Number.isFinite(time) || Date.now() - time > SNAPSHOT_MAX_AGE_MS;
+  }
+  function workspaceServiceItem(service) {
+    const stale = snapshotStale();
+    const safe = workerOnline && !stale;
+    const status = !workerOnline ? "Worker Offline" : stale ? "快照已过期" : service.status || "UNKNOWN";
+    const online = safe && service.status === "ONLINE", offline = safe && service.status === "OFFLINE";
+    let url = null; try { const candidate = new URL(service.openUrl); if (["http:","https:"].includes(candidate.protocol) && !candidate.username && !candidate.password) url = candidate; } catch {}
+    const local = url && ["localhost","127.0.0.1","[::1]"].includes(url.hostname);
+    const statusClass = online ? "online" : offline ? "offline" : "unknown";
+    const main = online && url ? `<a class="rt-btn runtime-primary" href="${escapeHTML(url.href)}" target="_blank" rel="noopener noreferrer">打开工作台 ↗</a>` : offline ? `<button class="rt-btn runtime-primary" data-op="up" data-target="${escapeHTML(service.id)}">启动服务</button>` : "";
+    const secondary = online ? actionButtons(["restart","down"],service.id).replace('>Restart<','>重启服务<').replace('>Down<','>停止服务<') : "";
+    const feedback = !workerOnline ? "Worker 离线，连接恢复后才能控制服务。" : stale ? "运行快照已过期，等待新状态后再操作。" : online ? url ? "服务探测通过，可在新窗口打开工作台。" : "服务探测通过，但 Worker 尚未提供工作台地址。" : offline ? "服务探测未通过，可请求启动或展开运行详情诊断。" : "服务状态未知，等待可靠状态后再操作。";
+    return `<li class="workspace-service compact-service"><div class="runtime-section-head"><h2>服务控制</h2><span class="runtime-state ${statusClass}"><span class="runtime-status-dot" aria-hidden="true"></span>${escapeHTML(status)}</span></div><p class="runtime-feedback">${feedback}</p><div class="rt-actions workspace-service-actions">${main}${secondary}</div><details class="runtime-diagnostics"><summary>运行详情${offline ? " · 诊断" : ""}</summary><dl class="runtime-facts"><div><dt>Worker ID</dt><dd>${escapeHTML(snapshot?.workerId || "—")}</dd></div><div><dt>Runtime ID</dt><dd>${escapeHTML(service.id)}</dd></div><div><dt>快照时间</dt><dd>${escapeHTML(formatTime(snapshot?.generatedAt))}</dd></div><div><dt>入口端口</dt><dd>${escapeHTML(url ? url.port || (url.protocol === "https:" ? "443" : "80") : "未知")}</dd></div><div><dt>工作台地址</dt><dd>${escapeHTML(url?.href || "未提供")}</dd></div></dl><p>状态来自 Worker 探测。探测失败不能单凭此认定进程停止；Worker 在线也不代表业务服务在线。</p><p>${local ? "这是 Worker 本机地址，手机或其他设备需配置可达地址。" : "当前设备访问尚未验证。"}</p><button class="rt-btn" disabled>查看日志 · 浏览器接口未接入</button><p>可在 Worker 本机使用 mashang logs 查看日志。</p></details></li>`;
   }
   function jobItem(job) {
     const last = job.lastRun || {};
@@ -134,7 +144,7 @@ export function initRuntimeUI() {
       last.summary ? escapeHTML(last.summary) : "",
     ].filter(Boolean).join(" · ");
     const description = operation.description ? `<span class="rt-sub">${escapeHTML(operation.description)}</span>` : "";
-    const actions = operation.enabled ? actionButtons(["run"], operation.id) : "";
+    const actions = operation.enabled && !operation.requiresSnapshot ? actionButtons(["run"], operation.id) : "";
     return `<li class="rt-item"><span class="rt-dot ${state.cls}"></span><div class="rt-main"><strong>${escapeHTML(operation.label || operation.id)}</strong><span class="rt-sub">${detail}</span>${description}</div><div class="rt-actions">${actions}</div></li>`;
   }
   function controlItem(control) {
@@ -147,7 +157,7 @@ export function initRuntimeUI() {
       : control.status === "AWAITING_PERMISSION" ? target : `${control.op} · ${target}`;
     const sub = control.status === "AWAITING_PERMISSION" ? "需要确认" : active ? "" : state.label;
     const reason = control.reason && control.status !== "COMPLETED" ? escapeHTML(control.reason) : "";
-    const detail = [sub, reason].filter(Boolean).join(" · ");
+    const detail = [sub, reason, !active ? `历史操作 · ${formatTime(control.updatedAt || control.createdAt)}` : ""].filter(Boolean).join(" · ");
     let actions = "";
     if (control.status === "AWAITING_PERMISSION") {
       actions = `<button class="rt-btn allow" data-control="${escapeHTML(control.controlId)}" data-decision="approve">允许</button><button class="rt-btn reject" data-control="${escapeHTML(control.controlId)}" data-decision="reject">拒绝</button>`;
@@ -158,49 +168,37 @@ export function initRuntimeUI() {
   }
 
   function render() {
-    if (workerIdEl) workerIdEl.textContent = snapshot?.workerId || "Worker";
-    if (stateEl) {
-      stateEl.textContent = workerOnline ? "Worker 在线" : "Worker 离线";
-      stateEl.className = `runtime-state ${workerOnline ? "online" : "offline"}`;
-    }
-    meta.textContent = `快照 ${formatTime(snapshot?.generatedAt)} · 接收 ${formatTime(receivedAt)}`;
-
-    const sections = [];
-    const controlList = [...controls.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    const activeControls = controlList.filter((control) => ACTIVE_CONTROL_STATUSES.has(control.status));
-    const now = Date.now();
-    const recentControls = controlList
-      .filter((control) => !ACTIVE_CONTROL_STATUSES.has(control.status))
-      .filter((control) => now - (control.updatedAt ?? control.createdAt ?? 0) <= RECENT_MAX_AGE_MS)
-      .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
-      .slice(0, RECENT_LIMIT);
+    const controlList = [...controls.values()].sort((a,b)=>(b.createdAt || 0)-(a.createdAt || 0));
     const services = snapshot?.services || [];
-    const dependencies = snapshot?.dependencies || [];
     const jobs = snapshot?.jobs || [];
     const operations = snapshot?.operations || [];
-    const workerStatus = workerOnline ? "ONLINE" : "OFFLINE";
-    const workerState = stateOf(SERVICE_STATES, workerStatus);
-    sections.push(`<div class="rt-group"><h3>Worker</h3><ul class="rt-list"><li class="rt-item"><span class="rt-dot ${workerState.cls}" role="img" aria-label="${workerState.label}"></span><div class="rt-main"><strong>${escapeHTML(snapshot?.workerId || "Worker")}</strong></div></li></ul></div>`);
-    if (!snapshot) {
-      sections.push(`<div class="rt-empty">暂无 Runtime 快照。Worker 连接后会自动上报。</div>`);
-    } else {
-      sections.push(`<div class="rt-group"><h3>Dependencies</h3><ul class="rt-list">${dependencies.map(dependencyItem).join("") || `<li class="rt-item"><div class="rt-main"><span class="rt-sub">无</span></div></li>`}</ul></div>`);
-      if (activeControls.length) sections.push(`<div class="rt-group rt-active-controls"><h3>Control</h3><ul class="rt-list">${activeControls.map(controlItem).join("")}</ul></div>`);
-      const groupedEntries = new Map();
-      function addEntry(group, kind, item) {
-        if (!groupedEntries.has(group)) groupedEntries.set(group, []);
-        groupedEntries.get(group).push({ kind, item });
+    const mount = ["fetch", "knbase"].includes(workspace) ? independentMount : conversationMount;
+    if (mount) {
+      // Older Workers may omit workspace metadata. Only presentation uses these legacy IDs/groups.
+      const belongs = item => (item.workspace || ({fetch:"fetch",myknbase:"knbase"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
+      const entries = [...services.filter(belongs).map(mount === independentMount ? workspaceServiceItem : serviceItem), ...jobs.filter(belongs).map(jobItem), ...operations.filter(belongs).map(operationItem)];
+      if (mount === independentMount) {
+        const service = services.find(belongs);
+        const badge = document.getElementById("independentStatus");
+        const status = workerOnline ? stateOf(SERVICE_STATES, service?.status) : SERVICE_STATES.UNKNOWN;
+        if (badge) { badge.textContent = workerOnline ? service?.status || "Unknown" : "Unknown"; badge.className = `runtime-state ${status.cls}`; }
       }
-      for (const service of services) addEntry(service.group || "Services", "service", service);
-      for (const job of jobs) addEntry(job.group || "Jobs", "job", job);
-      for (const operation of operations) addEntry(operation.group || "Operations", "operation", operation);
-      for (const [group, entries] of groupedEntries) {
-        const items = entries.map(({ kind, item }) => kind === "service" ? serviceItem(item) : kind === "job" ? jobItem(item) : operationItem(item)).join("");
-        sections.push(`<div class="rt-group"><h3>${escapeHTML(group)}</h3><ul class="rt-list">${items}</ul></div>`);
-      }
+      const targetIds = new Set([...services, ...jobs, ...operations].filter(belongs).map(item=>item.id));
+      const matching = controlList.filter(item=>targetIds.has(item.targetId));
+      const actions = [...matching.filter(item=>ACTIVE_CONTROL_STATUSES.has(item.status)), ...matching.filter(item=>!ACTIVE_CONTROL_STATUSES.has(item.status) && Date.now()-(item.updatedAt ?? item.createdAt ?? 0)<=RECENT_MAX_AGE_MS).slice(0,RECENT_LIMIT)];
+      const activeActions = actions.filter(item=>ACTIVE_CONTROL_STATUSES.has(item.status));
+      const history = actions.filter(item=>!ACTIVE_CONTROL_STATUSES.has(item.status));
+      const historyOpen = mount.querySelector(".runtime-history")?.open;
+      const detailsOpen = mount.querySelector(".runtime-diagnostics")?.open;
+      mount.innerHTML = (controlError ? `<p role="alert" class="rt-empty">${escapeHTML(controlError)}</p>` : "") + (mount === independentMount ? "" : `<div class="workspace-runtime-meta">运行节点 · ${escapeHTML(snapshot?.workerId || "Mac Worker")} · ${workerOnline ? "Worker 在线" : "Worker 离线"} · 快照 ${escapeHTML(formatTime(snapshot?.generatedAt))}</div>`)
+        + (workspace === "publish" ? `<p class="rt-empty">${operations.some(item=>belongs(item) && item.requiresSnapshot) ? "发布审批与结果在对话中展示。" : "正式发布尚未接入：Worker 尚未注册快照发布能力。"}</p>` : `<ul class="rt-list">${entries.join("") || '<li class="rt-empty">尚无属于此工作空间的 Runtime 记录</li>'}</ul><p class="workspace-runtime-note ${mount === independentMount ? 'hidden' : ''}">服务状态来自 Worker 探测，不等于本设备可访问。Offline 表示探测未通过，不能单凭它认定进程已停止。日志目前可在 Worker 本机通过 mashang logs 查看。</p>`)
+        + (activeActions.length ? `<ul class="rt-list rt-current-actions">${activeActions.map(controlItem).join("")}</ul>` : "")
+        + (history.length ? `<details class="runtime-history"><summary>操作历史 · ${history.length}</summary><p>以下是已结束的操作记录，不代表当前服务状态。</p><ul class="rt-list">${history.map(controlItem).join("")}</ul></details>` : "");
+      if (historyOpen && mount.querySelector(".runtime-history")) mount.querySelector(".runtime-history").open = true;
+      if (detailsOpen && mount.querySelector(".runtime-diagnostics")) mount.querySelector(".runtime-diagnostics").open = true;
+      if (actions.some(item=>item.status === "AWAITING_PERMISSION") && mount === conversationMount) mount.closest("details").open = true;
+      if (!workerOnline || (mount === independentMount && snapshotStale())) for (const button of mount.querySelectorAll("button")) button.disabled = true;
     }
-    if (recentControls.length) sections.push(`<details class="rt-recent"><summary>Recent actions <span>${recentControls.length}</span></summary><ul class="rt-list">${recentControls.map(controlItem).join("")}</ul></details>`);
-    body.innerHTML = sections.join("");
   }
 
   async function refresh() {
@@ -209,7 +207,6 @@ export function initRuntimeUI() {
       if (response.ok) {
         const data = await response.json();
         workerOnline = Boolean(data.workerOnline);
-        receivedAt = data.receivedAt || null;
         snapshot = data.snapshot || null;
       }
     } catch { /* Keep the last known snapshot. */ }
@@ -223,7 +220,6 @@ export function initRuntimeUI() {
   function update(event) {
     if (event.type === "runtime.control.permission.requested") {
       upsertControl({ controlId: event.controlId, op: event.op, targetId: event.targetId, status: "AWAITING_PERMISSION" });
-      open();
       render();
       return;
     }
@@ -233,25 +229,19 @@ export function initRuntimeUI() {
       return;
     }
     workerOnline = Boolean(event.workerOnline);
-    if (event.receivedAt) receivedAt = event.receivedAt;
     if (event.snapshot) snapshot = event.snapshot;
     render();
-  }
-
-  function open() {
-    panel.classList.remove("hidden");
-    refresh();
   }
 
   async function requestControl(op, targetId) {
     try {
       const response = await fetch("/api/runtime/control", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op, targetId }) });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) return;
+      if (!response.ok) { controlError = data.error || "运行控制请求失败"; render(); return; }
+      controlError = "";
       upsertControl(data);
-      open();
       render();
-    } catch { /* Ignore network errors; Hub will surface failures. */ }
+    } catch { controlError = "运行控制请求未送达，请检查连接"; render(); }
   }
   async function decide(controlId, approve) {
     try {
@@ -264,19 +254,18 @@ export function initRuntimeUI() {
     } catch { /* SSE will reconcile state. */ }
   }
 
-  body.addEventListener("click", (event) => {
+  const handleClick = (event) => {
     const action = event.target.closest("[data-op]");
+    if (action && (action.disabled || !workerOnline || (event.currentTarget === independentMount && snapshotStale()))) return;
     if (action) { requestControl(action.dataset.op, action.dataset.target); return; }
     const decision = event.target.closest("[data-decision]");
     if (decision) { decide(decision.dataset.control, decision.dataset.decision === "approve"); return; }
     const cancel = event.target.closest("[data-cancel]");
     if (cancel) cancelControl(cancel.dataset.control);
-  });
-  toggle?.addEventListener("click", () => (panel.classList.contains("hidden") ? open() : panel.classList.add("hidden")));
-  close?.addEventListener("click", () => panel.classList.add("hidden"));
-
-  const interval = window.setInterval(() => { if (!panel.classList.contains("hidden")) refresh(); }, 15000);
+  };
+  for (const mount of [conversationMount, independentMount].filter(Boolean)) mount.addEventListener("click", handleClick);
+  const interval = window.setInterval(refresh, 15000);
   refresh();
 
-  return { update, open, refresh, destroy: () => clearInterval(interval) };
+  return { update, refresh, setWorkspace(kind) { workspace = kind; render(); }, destroy: () => clearInterval(interval) };
 }

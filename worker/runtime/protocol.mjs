@@ -22,6 +22,7 @@ export function snapshotFromStatus(status, { workerId, sequence, generatedAt = n
     })),
     services: (status.services || []).map((service) => ({
       id: service.id,
+      ...(typeof service.workspace === "string" ? { workspace: service.workspace } : {}),
       label: service.label,
       status: service.online ? "ONLINE" : "OFFLINE",
       managed: Boolean(service.managed),
@@ -31,6 +32,7 @@ export function snapshotFromStatus(status, { workerId, sequence, generatedAt = n
     })),
     jobs: (status.jobs || []).map((job) => ({
       id: job.id,
+      ...(typeof job.workspace === "string" ? { workspace: job.workspace } : {}),
       label: job.label,
       ...(typeof job.group === "string" ? { group: job.group } : {}),
       lastRun: {
@@ -41,10 +43,12 @@ export function snapshotFromStatus(status, { workerId, sequence, generatedAt = n
     })),
     operations: (status.operations || []).map((operation) => ({
       id: operation.id,
+      ...(typeof operation.workspace === "string" ? { workspace: operation.workspace } : {}),
       label: operation.label,
       ...(typeof operation.group === "string" ? { group: operation.group } : {}),
       ...(typeof operation.description === "string" ? { description: operation.description } : {}),
       enabled: Boolean(operation.enabled),
+      ...(operation.requiresSnapshot ? { requiresSnapshot: true } : {}),
       cancellationSupported: operation.cancellationSupported !== false,
       ...(Number.isInteger(operation.timeoutMs) ? { timeoutMs: operation.timeoutMs } : {}),
       lastRun: {

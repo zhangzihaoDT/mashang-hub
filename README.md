@@ -299,7 +299,15 @@ Configure Sealos ingress for HTTPS and use the resulting `https://` URL as the W
 
 The `myknbase` Worker service and workspace now point to V2 (`~/Documents/github/mashang-knbase`), displayed as **mashang-knbase**, at `http://127.0.0.1:4317`. The Worker starts it with `npm start` and probes `/api/tree`. `MYKNBASE_ROOT` and `MYKNBASE_URL` remain available as overrides. V1 (`~/Desktop/myknbase`, port 7870) is no longer the default.
 
-## 对话文字发布（实验，默认关闭，待凭证隔离）
+## Publish Workspace 快照发布（默认关闭，待隔离部署）
+
+现有 Publish 对话支持起草、修改、最终纯文本预览、明确审批、执行状态及发布链接。正式路线使用 Worker 注册的快照 Operation；复用 Task Store、Runtime Control、执行 journal 和 mashang-publish publisher，不增加独立 Dashboard。
+
+Hub 配置 `HUB_APPROVAL_PRIVATE_KEY`（Ed25519 PEM，仅 Hub 持有）及登录门禁。Worker 配置 `MASHANG_PUBLISH_SERVICE_URL` 与持久化 `MASHANG_PUBLISH_SNAPSHOT_DIR`。隔离服务只持有公钥，使用独立 OS 身份启动 `worker/publishing/service.mjs`，复用原 publisher、数据目录及官方 weibo-cli。配置、核验、Mock 证据与正式部署前置条件见 [Publish Operation 验收](docs/publish-operation-acceptance.md)。旧实验开关与正式路线不能同时启用。
+
+Worker 也支持 `MASHANG_PUBLISH_DIRECT=1` 在进程内直接复用现有 mashang-publish publisher，无需发布 HTTP 服务；仍验证 Hub 审批签名和持久化 claim。该方式使用当前账号的官方 CLI 登录，不提供额外 OS 凭据隔离。所需变量与验收见上述文档。
+
+## 对话文字发布（旧实验，默认关闭，待凭证隔离）
 
 本地 Worker 可通过 `MASHANG_PUBLISH_ENABLED=1` 启用受控文字发布入口。用户在原窗口输入“把这段文字发布到微博：正文”，查看正文、公开范围和内容声明后回复“确认发布”。执行仍由独立 mashang-publish CLI 完成；Hub 不访问微博凭证。
 

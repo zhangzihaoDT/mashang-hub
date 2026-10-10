@@ -2,6 +2,10 @@
 
 ## 当前状态
 
+2026-10-10 更新：用户明确批准当前账号直连现有 mashang-publish，接受不额外建立 OS 凭据隔离。该模式已在本地启用，保留签名正文审批与持久化防重。本文其余部分仍描述独立身份部署方案，不将当前直连模式称为已完成 OS 隔离。详见 [直连验收更新](publish-operation-acceptance.md#worker-直连现有-mashang-publish)。
+
+已实现签名快照 Operation 和隔离执行服务代码；Mock 与部署验收分别记录于 [Publish Operation 验收](publish-operation-acceptance.md)。代码实现不代表 OS 隔离已经落实。
+
 Publishing 仍默认关闭。当前 deny-all Worker 入口属于实验，不作为正式发布路线；关闭开关时 OpenCode 普通工具保持可用。本文件是部署设计，不代表账户、Keychain 或执行服务已创建。
 
 ## 信任边界

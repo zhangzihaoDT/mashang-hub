@@ -15,25 +15,50 @@ let currentWorkspace = 'service';
 let submitting = false;
 let runtimeSnapshot = null;
 const workspaceCopy = {
-  service: { title:'Service Workspace', eyebrow:'BUSINESS & RESEARCH', placeholder:'描述业务问题、研究主题或报告要求…', welcome:'今天，想研究什么？', description:'提出业务问题，查看分析结论、研究报告与附件。' },
-  publish: { title:'Publish Workspace', eyebrow:'DRAFT & REVIEW', placeholder:'描述写作主题，或粘贴需要整理的正文…', welcome:'把想法，整理成文字。', description:'起草、修改和审阅正文。正式发布尚未接入。' },
+  service: { title:'Service', eyebrow:'BUSINESS & RESEARCH', placeholder:'描述业务问题、研究主题或报告要求…', welcome:'今天，想研究什么？', description:'提出业务问题，查看分析结论、研究报告与附件。' },
+  publish: { title:'Publish', eyebrow:'DRAFT & REVIEW', placeholder:'描述写作主题，或粘贴需要整理的正文…', welcome:'把想法，整理成文字。', description:'起草、修改和审阅正文。最终正文经预览、审批后由授权 Worker 执行。' },
 };
 function sessionStorageKey(context = state) { return context === conversations.publish ? 'mashang-hub-publish-session' : 'mashang-hub-session'; }
 function refreshExecutionInfo() {
+  $('#resultBody').classList.toggle('hidden', !state.turnActive && !state.activeTaskId && !state.assistantText && !state.artifacts.length && !state.operationControl);
   $('#taskTitle').textContent = state.taskTitle || '等待一项新任务';
   $('#executionInfo').textContent = state.activeTaskId ? [state === conversations.publish ? '内容起草' : '业务分析', state.selectedModel?.label || 'Agent', state.finishedAt && state.startedAt ? `${((state.finishedAt - state.startedAt) / 1000).toFixed(1)} 秒` : state.turnActive ? '执行中' : ''].filter(Boolean).join(' · ') : '任务状态、执行信息和结果汇集在这里。';
 }
+function renderPublication() {
+  const mount = $('#publicationReview');
+  const context = state;
+  const control = context.operationControl;
+  mount.classList.toggle('hidden', !control || state !== conversations.publish);
+  if (!control) { mount.innerHTML = ''; return; }
+  const labels = { DRAFT:'草稿', PENDING_APPROVAL:'待审批', APPROVED:'已批准', RUNNING:'发布执行中', COMPLETED:'发布完成', FAILED:'发布失败', UNKNOWN:'待核验', CANCELLED:'审批已失效' };
+  mount.innerHTML = `<strong>${escapeHTML(labels[control.status] || control.status)}</strong><p>操作 ${escapeHTML(control.operationId || '')}</p>`
+    + (control.status === 'PENDING_APPROVAL' && state.reviewedDigest === control.digest ? '<button type="button" id="approvePublication">我已审阅最终正文，确认发布</button>' : '')
+    + (control.status === 'UNKNOWN' ? '<p>结果尚未确认，不会自动重复发布。</p><button type="button" id="verifyPublication">核验发布结果</button>' : '')
+    + (control.resultUrl ? `<a href="${escapeHTML(control.resultUrl)}" target="_blank" rel="noopener noreferrer">查看发布链接 ↗</a>` : '');
+  optional('#approvePublication')?.addEventListener('click', async event => {
+    event.target.disabled = true;
+    try {
+      const update = await api(`/api/runtime/controls/${encodeURIComponent(control.controlId)}/decision`, { method:'POST', body:JSON.stringify({approve:true,digest:control.digest}) });
+      // SSE may deliver the result before the approval HTTP response arrives.
+      if (context.operationControl?.controlId === control.controlId && !['COMPLETED','FAILED','UNKNOWN','CANCELLED'].includes(context.operationControl.status)) context.operationControl = update;
+    }
+    catch (error) { pushNotice(error.message); }
+    renderPublication();
+  });
+  optional('#verifyPublication')?.addEventListener('click', async event => {
+    event.target.disabled = true;
+    try { await api(`/api/runtime/controls/${encodeURIComponent(control.controlId)}/reconcile`, {method:'POST'}); } catch (error) { pushNotice(error.message); }
+  });
+}
 function renderConversation() {
-  renderSession(); renderMessages(); renderResult(state.assistantText, state.resultPlainText); renderArtifacts(); setStatus(state.status); refreshExecutionInfo(); updateCancelVisibility(); updateSendAvailability(); renderDebug();
+  renderPublication(); renderSession(); renderMessages(); renderResult(state.assistantText, state.resultPlainText); renderArtifacts(); setStatus(state.status); refreshExecutionInfo(); updateCancelVisibility(); updateSendAvailability(); renderDebug();
 }
 function renderIndependent() {
   const isFetch = currentWorkspace === 'fetch';
   const service = runtimeSnapshot?.services?.find(item => item.id === (isFetch ? 'fetch' : 'myknbase'));
-  $('#independentTitle').textContent = isFetch ? 'Fetch Workspace' : 'Knbase Workspace';
-  $('#independentIcon').textContent = isFetch ? '◎' : '▤';
-  $('#independentHeading').textContent = isFetch ? '数据采集工作台' : '知识工作台';
-  $('#independentDescription').textContent = isFetch ? '在 Fetch 原有界面中采集链接、查看任务与管理采集结果。' : '在 Knbase 原有界面中浏览资料、检索文档与整理知识。';
-  $('#independentStatus').textContent = !state.connected ? 'Worker 离线' : ({ONLINE:'在线',OFFLINE:'离线',UNKNOWN:'状态未知'})[service?.status] || '等待服务状态';
+  $('#independentTitle').textContent = isFetch ? 'Fetch' : 'Knbase';
+  $('#independentHeading').textContent = isFetch ? '独立工作台 · 由 Fetch 自身维护' : '独立工作台 · 由 Knbase 自身维护';
+  $('#independentDescription').textContent = isFetch ? '数据采集 · 内容解析 · 结果管理' : '资料浏览 · 知识检索 · 文档管理';
   const link = $('#independentOpen');
   let url = null; try { const candidate = new URL(service?.openUrl); if (['http:','https:'].includes(candidate.protocol) && !candidate.username && !candidate.password) url = candidate; } catch {}
   link.classList.toggle('hidden', !url); if (url) link.href = url.href; else link.removeAttribute('href');
@@ -44,7 +69,9 @@ function renderIndependent() {
 function switchWorkspace(kind) {
   if (submitting) return;
   state.draft = $('#prompt').value;
+  state.publicationVisibility = $('#publicationVisibility').value; state.publicationStatement = $('#publicationStatement').value;
   currentWorkspace = kind;
+  runtimeUI.setWorkspace(kind);
   for (const button of $('#workspaceNav').querySelectorAll('[data-workspace]')) { const active = button.dataset.workspace === kind; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); }
   const conversational = kind === 'service' || kind === 'publish';
   $('#conversationWorkspace').classList.toggle('hidden', !conversational); $('#independentWorkspace').classList.toggle('hidden', conversational);
@@ -54,6 +81,9 @@ function switchWorkspace(kind) {
   state.connected = previous.connected; state.workerStatus = previous.workerStatus; state.models = previous.models;
   if (!state.selectedModel) state.selectedModel = previous.selectedModel;
   const copy = workspaceCopy[kind]; $('#workspaceTitle').textContent = copy.title; $('#workspaceEyebrow').textContent = copy.eyebrow; $('#workspaceNotice').classList.toggle('hidden', kind !== 'publish');
+  $('#previewPublication').classList.toggle('hidden', kind !== 'publish');
+  for (const id of ['publicationVisibility','publicationStatement']) $('#'+id).classList.toggle('hidden', kind !== 'publish');
+  $('#publicationVisibility').value = state.publicationVisibility || 'public'; $('#publicationStatement').value = state.publicationStatement || 'original';
   $('#prompt').placeholder = copy.placeholder; $('#prompt').value = state.draft || ''; autosizePrompt();
   renderConversation(); renderModelOptions(state.models);
   if (!state.session) ensureSession().catch(error => { if (state === conversations[kind]) pushNotice(error.message); });
@@ -93,7 +123,10 @@ function markdown(value = "") {
   return text.replace(/\x00(\d+)\x00/g, (_, index) => blocks[index]);
 }
 function sessionName(session) { return session?.title || session?.name || session?.id?.slice(0, 16) || "未创建"; }
-function updateSendAvailability() { $("#send").disabled = state.turnActive || submitting || !state.connected || !state.selectedModel?.available; }
+function updateSendAvailability() {
+  $('#send').disabled = state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
+  $('#previewPublication').disabled = state.turnActive || submitting || !state.connected || !runtimeSnapshot?.operations?.some(item=>item.workspace === 'publish' && item.requiresSnapshot && item.enabled);
+}
 function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); }
 function taskLabel(status) { return state === conversations.publish ? ({RUNNING:'正在起草',COMPLETED:'草稿已完成'})[status] || TASK_LABELS[status] || status : TASK_LABELS[status] || status; }
 function setStatus(status, label) { state.status = status; refreshExecutionInfo(); const el = $("#runState"); el.className = `run-state ${status.toLowerCase()}`; el.querySelector("span:last-child").textContent = label || taskLabel(status); if (state.turnActive) recordProcess(status, label); }
@@ -126,7 +159,10 @@ function renderMessages() {
   const container = $("#messages");
   const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
   const body = state.messages.length ? state.messages.map(renderMessage).join("") : `<div class="welcome"><img class="avatar" src="/raccoon.png" width="42" height="42" alt="mashang" /><h2>${workspaceCopy[state === conversations.publish ? "publish" : "service"].welcome}</h2><p>${workspaceCopy[state === conversations.publish ? "publish" : "service"].description}</p></div>`;
+  const reply = $("#resultBody");
+  reply.remove();
   container.innerHTML = body + (state.pendingPermission ? permissionHTML() : "");
+  container.append(reply);
   if (nearBottom) container.scrollTop = container.scrollHeight;
 }
 function currentProcessMessage() { const last = state.messages[state.messages.length - 1]; return last && last.role === "assistant" && last.kind === "process" ? last : null; }
@@ -144,7 +180,7 @@ function recordProcess(status, label) {
 function pushProcessNote(label) { const message = ensureProcessMessage(); message.steps.push({ label, status: "note" }); renderMessages(); }
 function updateRunningLabel(label) { const message = currentProcessMessage(); const step = message?.steps[message.steps.length - 1]; if (!step || step.status !== "running" || step.label === label) return; step.label = label; renderMessages(); }
 function pushNotice(text, level = "error") { state.messages.push({ role: "assistant", kind: "notice", text, level }); renderMessages(); }
-function renderResult(text, plainText = false) { $("#resultContent").innerHTML = text ? (plainText ? `<pre style="white-space:pre-wrap">${escapeHTML(text)}</pre>` : markdown(text)) : `<div class="empty-result"><span>◌</span><p>确认执行后，回答与附件会显示在这里。</p></div>`; }
+function renderResult(text, plainText = false) { $("#resultContent").innerHTML = text ? (plainText ? `<pre style="white-space:pre-wrap">${escapeHTML(text)}</pre>` : markdown(text)) : ""; }
 function artifactCandidates(text = "") { const pattern = /(?:^|[\s"'`(])((?:[\p{L}\p{N}_.-]+\/)+[\p{L}\p{N}_.-]+\.(?:md|html|csv|png))(?=$|[\s"'`),.;])/gu; return [...text.matchAll(pattern)].map((match) => match[1]); }
 function formatBytes(bytes) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
 function artifactURL(endpoint, artifactId) { return `${endpoint}?artifactId=${encodeURIComponent(artifactId)}`; }
@@ -212,15 +248,27 @@ async function restoreSession(context) {
   if (!context.session) context.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "mashang-hub" }) });
   localStorage.setItem(sessionStorageKey(context), context.session.id);
   if (state === context) { renderSession(); renderDebug(); }
-  const latest = (await api('/api/tasks')).find(task => task.conversationId === context.session.id && ['DISPATCHED', 'RUNNING', 'INTERRUPTED', 'UNCERTAIN'].includes(task.status));
+  const latest = (await api('/api/tasks')).find(task => task.source === 'conversation' && task.conversationId === context.session.id && ['DISPATCHED', 'RUNNING', 'INTERRUPTED', 'UNCERTAIN'].includes(task.status));
+  if (context === conversations.publish) {
+    const controls = await api('/api/runtime/controls');
+    const control = controls.filter(item => item.snapshotRef && item.conversationId === context.session.id).sort((a,b)=>b.createdAt-a.createdAt)[0];
+    if (control) {
+      context.operationControl = control;
+      try {
+        const preview = await api(`/api/runtime/controls/${encodeURIComponent(control.controlId)}/preview`);
+        context.assistantText = preview.text; context.resultPlainText = true; context.reviewedDigest = preview.digest;
+      } catch { context.assistantText = 'Worker 快照暂不可读，请恢复连接后重新打开工作空间。'; }
+      if (state === context) renderConversation();
+    }
+  }
   if (latest && !context.activeTaskId) { context.activeTaskId = latest.taskId; context.turnId = latest.turnId; context.taskState = latest.status === 'DISPATCHED' ? 'SUBMITTING' : latest.status === 'UNCERTAIN' ? 'INTERRUPTED' : latest.status; context.turnActive = latest.status === 'RUNNING' || latest.status === 'DISPATCHED'; if (state === context) setStatus(context.taskState, latest.status === 'UNCERTAIN' ? '结果待核对，禁止自动重试' : latest.status === 'INTERRUPTED' ? '等待 Worker 执行对账' : '已恢复任务状态'); updateCancelVisibility(); }
 }
 function parseMessage(data) { return (data?.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n"); }
 function actualModel(info) { const modelID = info?.modelID || info?.model?.id; const providerID = info?.providerID || info?.model?.providerID; const known = state.models?.find((model) => model.modelID === modelID && model.providerID === providerID); return { label: known ? modelLabel(known) : modelID ? `${providerID || ""}/${modelID}` : "Unknown model", modelID, providerID, cost: info?.cost, tokens: info?.tokens }; }
-async function sendPrompt(text) {
+async function sendPrompt(text, publicationPreview = false) {
   if (state.turnActive || submitting) return;
   submitting = true;
-  if (state.activeTaskId && (state.assistantText || state.artifacts.length)) state.messages.push({ role:'assistant',kind:'result',text:state.assistantText,status:state.taskState,title:state.taskTitle,plainText:state.resultPlainText,artifacts:state.artifacts.map(item=>({...item})) });
+  if (state.activeTaskId) state.messages.push({ role:'assistant',kind:'result',text:state.assistantText,status:state.taskState,title:state.taskTitle,plainText:state.resultPlainText,artifacts:state.artifacts.map(item=>({...item})) });
   state.taskTitle = text.trim().slice(0, 48); state.resultPlainText = false; state.startedAt = Date.now(); state.finishedAt = null;
   state.messages.push({ role: "user", text });
   state.assistantText = ""; state.artifactScanText = ""; state.artifacts = [];
@@ -228,8 +276,9 @@ async function sendPrompt(text) {
   renderMessages(); renderResult(""); renderArtifacts(); setStatus("UNDERSTANDING"); updateCancelVisibility(); $("#send").disabled = true;
   try {
     if (!state.session) await ensureSession();
-    if (!state.selectedModel?.available) throw new Error("请选择可用模型");
-    const response = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/message`, { method: "POST", body: JSON.stringify({ model: { providerID: state.selectedModel.providerID, modelID: state.selectedModel.modelID }, parts: [{ type: "text", text: state === conversations.publish ? `这是内容起草与审阅请求，只生成或修改文字，不执行发布。\n\n${text}` : text }], confirmationId: state.confirmationId }) });
+    if (!publicationPreview && !state.selectedModel?.available) throw new Error("请选择可用模型");
+    state.operationControl = null; renderPublication();
+    const response = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/message`, { method: "POST", body: JSON.stringify({ model: state.selectedModel ? { providerID: state.selectedModel.providerID, modelID: state.selectedModel.modelID } : null, workspaceId: state === conversations.publish ? "publish" : null, parts: [{ type: "text", text: state === conversations.publish && !publicationPreview ? `这是内容起草与审阅请求，只生成或修改文字，不执行发布。\n\n${text}` : text }], confirmationId: state.confirmationId }) });
     if (response.taskId) { if (response.turnId) state.turnId = response.turnId; applyTaskEvent(response.taskId, "task.accepted"); }
     for (const event of state.earlyEvents.splice(0)) handleServerEvent(event);
     renderDebug();
@@ -252,6 +301,11 @@ function handleTerminal(event) {
 }
 function showPermission(request) { if (isTerminalState()) return; state.pendingPermission = request; setStatus("WAITING_PERMISSION", "等待权限"); renderMessages(); }
 function handleServerEvent(event) {
+  if (event.type === 'runtime.control.updated' && event.snapshotRef) {
+    const context = Object.values(conversations).find(item => item?.session?.id === event.conversationId);
+    if (context && (!context.operationControl || context.operationControl.controlId === event.controlId || event.status === 'PENDING_APPROVAL')) context.operationControl = event;
+    renderPublication(); refreshExecutionInfo();
+  }
   if (event.type === "permission.requested" && event.request?.sessionID) {
     const target = Object.values(conversations).find(context=>context?.openCodeSessionId === event.request.sessionID);
     if (!target) return;
@@ -267,7 +321,7 @@ function handleServerEvent(event) {
 function processServerEvent(event) {
   if (event.taskId && !state.activeTaskId && state.turnActive) { state.earlyEvents.push(event); return; }
   logEvent(event);
-  if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); if (event.type === "runtime.snapshot") { runtimeSnapshot = event.snapshot; if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); } return; }
+  if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); if (event.type === "runtime.snapshot") { runtimeSnapshot = event.snapshot; updateSendAvailability(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); } return; }
   if (event.type === "worker.status") { state.models = event.models || state.models; for (const context of Object.values(conversations)) if (context) context.models = state.models; if (event.models) renderModelOptions(event.models); setConnection(["ONLINE", "BUSY"].includes(event.status), event.status); return; }
   if (event.type === "session.mapped") { state.openCodeSessionId = event.openCodeSessionId; renderDebug(); return; }
   if (event.type === "task.timeout.warning") { if (!isTerminalState()) { setStatusLabel("运行超时，正在尝试取消"); updateRunningLabel("运行超时，正在尝试取消"); } return; }
@@ -276,7 +330,7 @@ function processServerEvent(event) {
   if (event.type === "task.accepted") { applyTaskEvent(event.taskId, "task.accepted"); return; }
   if (event.type === "task.running") { applyTaskEvent(event.taskId, "task.running"); return; }
   if (event.type === "agent.message.delta" && event.taskId === state.activeTaskId) { state.assistantText += event.text || ""; updateRunningLabel("正在生成结果"); return; }
-  if (event.type === "agent.message.completed" && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, "agent.message.completed"); if (Object.hasOwn(event, "confirmationId")) state.confirmationId = event.confirmationId; completeAssistant(event.text || state.assistantText, event.actualModel, event.plainText === true); return; }
+  if (event.type === "agent.message.completed" && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, "agent.message.completed"); if (Object.hasOwn(event, "confirmationId")) state.confirmationId = event.confirmationId; completeAssistant(event.text || state.assistantText, event.actualModel, event.plainText === true); if (event.operationControl) { state.operationControl = event.operationControl; state.reviewedDigest = event.operationControl.digest; renderPublication(); } return; }
   if (event.type === "task.completed") { state.finishedAt = Date.now(); if (applyTaskEvent(event.taskId, "task.completed")) state.turnActive = false; updateSendAvailability(); return; }
   if (["task.failed", "task.timeout", "task.cancelled", "task.interrupted"].includes(event.type)) { handleTerminal(event); return; }
   if (event.type === "artifact.created" && event.taskId === state.activeTaskId) { state.artifacts = [...state.artifacts.filter((artifact) => artifact.artifactId !== event.artifactId), { ...event, preview: "" }]; renderArtifacts(); pushProcessNote(`已生成 ${event.name || event.path || "文件"}`); return; }
@@ -289,7 +343,21 @@ function autosizePrompt() { const input = optional("#prompt"); if (!input) retur
 function syncKeyboardInset() { const vv = window.visualViewport; if (!vv) return; const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)); document.documentElement.style.setProperty("--keyboard-inset", `${inset}px`); document.body.classList.toggle("keyboard-open", inset > 80); }
 const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches;
 $("#promptForm").addEventListener("submit", (event) => { event.preventDefault(); const input = $("#prompt"); const text = input.value; if (!text.trim() || $("#send").disabled) return; input.value = ""; autosizePrompt(); sendPrompt(text).catch((error) => { state.taskState = "FAILED"; state.turnActive = false; setStatus("FAILED", `任务提交失败：${error.message}`); pushNotice(`无法提交任务：${error.message}`); }); });
-$("#prompt").addEventListener("input", autosizePrompt);
+$('#previewPublication').addEventListener('click', () => {
+  if (state !== conversations.publish || state.turnActive || submitting || !state.connected) return;
+  const text = $('#prompt').value;
+  if (!text.trim()) return;
+  sendPrompt(`发布微博[${$("#publicationVisibility").value},${$("#publicationStatement").value}]：${text}`, true).catch(error => { state.turnActive = false; state.taskState = 'FAILED'; setStatus('FAILED'); updateSendAvailability(); pushNotice(error.message); });
+});
+function invalidatePublicationApproval() {
+  const control = state.operationControl;
+  if (control?.status === 'PENDING_APPROVAL') {
+    state.reviewedDigest = null; control.status = 'CANCELLED'; renderPublication();
+    api(`/api/runtime/controls/${encodeURIComponent(control.controlId)}/cancel`, {method:'POST'}).catch(error => pushNotice(error.message));
+  }
+}
+$('#prompt').addEventListener('input', () => { autosizePrompt(); invalidatePublicationApproval(); });
+for (const id of ['publicationVisibility','publicationStatement']) $('#'+id).addEventListener('change', invalidatePublicationApproval);
 $("#prompt").addEventListener("keydown", (event) => { if (event.key !== "Enter") return; if (coarsePointer && !event.metaKey && !event.ctrlKey) return; if (!event.shiftKey) { event.preventDefault(); $("#promptForm").requestSubmit(); } });
 if (window.visualViewport) { visualViewport.addEventListener("resize", syncKeyboardInset); visualViewport.addEventListener("scroll", syncKeyboardInset); }
 window.addEventListener("orientationchange", () => setTimeout(syncKeyboardInset, 300));
@@ -300,7 +368,7 @@ $('#newSession').addEventListener('click', async () => {
   try {
     state.session = await api('/api/sessions', { method:'POST', body:JSON.stringify({title:'mashang-hub'}) });
     localStorage.setItem(sessionStorageKey(), state.session.id);
-    Object.assign(state, {messages:[],artifacts:[],artifactScanText:'',activeTaskId:null,taskState:'IDLE',turnId:null,openCodeSessionId:null,turnActive:false,pendingPermission:null,confirmationId:null,earlyEvents:[],taskTitle:null,draft:'',assistantText:'',resultPlainText:false,startedAt:null,finishedAt:null});
+    Object.assign(state, {messages:[],artifacts:[],artifactScanText:'',activeTaskId:null,taskState:'IDLE',turnId:null,openCodeSessionId:null,turnActive:false,pendingPermission:null,confirmationId:null,operationControl:null,earlyEvents:[],taskTitle:null,draft:'',assistantText:'',resultPlainText:false,startedAt:null,finishedAt:null});
     $('#prompt').value = ''; renderConversation(); autosizePrompt();
   } catch (error) { pushNotice(`无法创建新对话：${error.message}`); }
   finally { submitting = false; updateSendAvailability(); }
@@ -308,5 +376,5 @@ $('#newSession').addEventListener('click', async () => {
 
 optional("#debugToggle")?.addEventListener("click", () => optional("#debug")?.classList.toggle("hidden")); optional("#debugClose")?.addEventListener("click", () => optional("#debug")?.classList.add("hidden"));
 const runtimeUI = initRuntimeUI();
-async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); fetch("/api/runtime").then(response=>response.json()).then(data=>{ runtimeSnapshot = data.snapshot; if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); }).catch(()=>{}); renderMessages(); connectEvents(); }
+async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); fetch("/api/runtime").then(response=>response.json()).then(data=>{ runtimeSnapshot = data.snapshot; updateSendAvailability(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); }).catch(()=>{}); renderMessages(); connectEvents(); }
 initialize();

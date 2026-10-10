@@ -44,6 +44,8 @@ export function sanitizeRuntimeSnapshot(message) {
         status: SERVICE_STATUS.has(service.status) ? service.status : "UNKNOWN",
         managed: Boolean(service.managed),
       };
+      const workspace = shortString(service.workspace);
+      if (workspace) clean.workspace = workspace;
       const group = shortString(service.group);
       const summary = shortString(service.summary);
       if (group) clean.group = group;
@@ -82,6 +84,8 @@ export function sanitizeRuntimeSnapshot(message) {
           finishedAt: timestampOrNull(lastRun.finishedAt),
         },
       };
+      const workspace = shortString(job.workspace);
+      if (workspace) clean.workspace = workspace;
       const group = shortString(job.group);
       if (group) clean.group = group;
       return clean;
@@ -98,6 +102,7 @@ export function sanitizeRuntimeSnapshot(message) {
         id,
         label: shortString(operation.label) || id,
         enabled: Boolean(operation.enabled),
+        ...(operation.requiresSnapshot === true ? { requiresSnapshot: true } : {}),
         cancellationSupported: operation.cancellationSupported !== false,
         lastRun: {
           status: OPERATION_STATUS.has(lastRun.status) ? lastRun.status : "UNKNOWN",
@@ -106,6 +111,8 @@ export function sanitizeRuntimeSnapshot(message) {
           code: Number.isInteger(lastRun.code) ? lastRun.code : null,
         },
       };
+      const workspace = shortString(operation.workspace);
+      if (workspace) clean.workspace = workspace;
       const group = shortString(operation.group);
       const description = shortString(operation.description);
       if (group) clean.group = group;

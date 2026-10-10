@@ -114,6 +114,7 @@ export function buildRegistry(env = process.env, config = null) {
     services: [
       {
         id: "fetch",
+        workspace: "fetch",
         label: "mashang-fetch",
         group: "APPS",
         category: "service",
@@ -129,6 +130,7 @@ export function buildRegistry(env = process.env, config = null) {
       },
       {
         id: "myknbase",
+        workspace: "knbase",
         label: "mashang-knbase",
         group: "APPS",
         category: "service",
@@ -144,6 +146,7 @@ export function buildRegistry(env = process.env, config = null) {
       },
       {
         id: "scheduler",
+        workspace: "service",
         label: "Scheduler",
         group: "MASHANG-SERVICE",
         summary: "后台服务",
@@ -167,8 +170,10 @@ export function buildRegistry(env = process.env, config = null) {
     ],
     jobs: [],
     operations: [
+      ...((env.MASHANG_PUBLISH_SERVICE_URL || env.MASHANG_PUBLISH_DIRECT === '1') ? [{ id: 'text-publication', workspace: 'publish', label: '微博文本发布', description: '审阅不可变正文后明确授权；结果不确定时只核验。', enabled: true, requiresSnapshot: true, cancellationSupported: false, timeoutMs: 60000 }] : []),
       {
         id: "daily",
+        workspace: "service",
         label: "Daily pipeline",
         group: "MASHANG-SERVICE",
         description: "刷新、校验与观察同步；会写入本地数据并同步外部系统（不含销售监控）。",
@@ -187,6 +192,7 @@ export function buildRegistry(env = process.env, config = null) {
       },
       {
         id: "allupdate",
+        workspace: "service",
         label: "Full data update",
         group: "MASHANG-SERVICE",
         description: "刷新全部数据集并校验；会写入本地数据。",

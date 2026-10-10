@@ -36,6 +36,7 @@ export async function probeService(service, options = {}) {
   const legacy = await detectLegacy(service);
   return {
     id: service.id,
+    workspace: service.workspace ?? null,
     label: service.label,
     group: service.group ?? null,
     summary: service.summary ?? null,
@@ -83,6 +84,7 @@ export async function collectStatus(registry, options = {}) {
       const result = pickLatestRun(scheduled, manual) || scheduled;
       return {
         id: job.id,
+        workspace: job.workspace ?? null,
         label: job.label,
         group: job.group ?? null,
         description: job.description || "",
@@ -107,10 +109,12 @@ export async function collectStatus(registry, options = {}) {
     const result = pickLatestRun(scheduled, manual) || { status: "IDLE" };
     return {
       id: operation.id,
+      workspace: operation.workspace ?? null,
       label: operation.label,
       group: operation.group ?? null,
       description: operation.description || "",
-      enabled: operation.enabled !== false && Boolean(operation.run),
+      enabled: operation.enabled !== false && Boolean(operation.run || operation.requiresSnapshot),
+      requiresSnapshot: operation.requiresSnapshot === true,
       cancellationSupported: operation.cancellationSupported !== false,
       timeoutMs: Number.isInteger(operation.timeoutMs) ? operation.timeoutMs : null,
       lastRun: {

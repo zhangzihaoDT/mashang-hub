@@ -7,7 +7,7 @@ const html = await readFile(join(here, "..", "public", "index.html"), "utf8");
 const app = await readFile(join(here, "..", "public", "app.js"), "utf8");
 const runtimeUI = await readFile(join(here, "..", "public", "runtime-ui.js"), "utf8");
 const required = ["connection", "sessionMeta", "messages", "runState", "resultBody", "resultContent", "promptForm", "prompt", "modelSelect", "send", "cancel"];
-const optional = ["artifacts", "debug", "debugToggle", "debugClose", "debugContent", "loginOverlay", "loginForm", "accessToken", "loginError", "runtime", "runtimeToggle", "runtimeClose", "runtimeState", "runtimeMeta", "runtimeBody"];
+const optional = ["artifacts", "debug", "debugToggle", "debugClose", "debugContent", "loginOverlay", "loginForm", "accessToken", "loginError"];
 const hasID = (id) => new RegExp(`id=["']${id}["']`).test(html);
 const referenced = (id) => app.includes(`#${id}`) || runtimeUI.includes(`"${id}"`);
 const htmlIDs = [...html.matchAll(/id=["']([^"']+)["']/g)].map((match) => match[1]);

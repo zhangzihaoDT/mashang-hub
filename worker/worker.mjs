@@ -1,3 +1,5 @@
+import { PublicationService, existingPublisher } from './publishing/service.mjs';
+import { PublicationOperation, PUBLISH_OPERATION } from './publishing/operation.mjs';
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -21,11 +23,22 @@ const projectRoot = process.env.MASHANG_SERVICE_ROOT;
 const heartbeatMs = Number(process.env.WORKER_HEARTBEAT_MS || 10000);
 const stateFile = process.env.WORKER_STATE_FILE || `${homedir()}/.mashang-hub/worker-state.json`;
 const journal = new ExecutionJournal(process.env.WORKER_EXECUTION_JOURNAL || `${stateFile}.executions.json`);
+const directPublication = process.env.MASHANG_PUBLISH_DIRECT === '1';
+if (directPublication && process.env.MASHANG_PUBLISH_SERVICE_URL) throw Error('PUBLISH_MODES_CONFLICT');
+const publicationLedger = process.env.MASHANG_PUBLISH_LEDGER_DIR || `${homedir()}/.mashang-hub/publication-ledger`;
+const publishRoot = process.env.MASHANG_PUBLISH_ROOT || join(homedir(), 'Documents/github/mashang-publish');
+const directExecutor = directPublication ? new PublicationService({
+  directory: publicationLedger,
+  publicKey: await readFile(process.env.MASHANG_PUBLISH_PUBLIC_KEY_FILE, 'utf8'),
+  ...await existingPublisher({ root: publishRoot, dataDirectory: process.env.MASHANG_PUBLISH_DATA_DIR || join(publishRoot, 'data'), directory: publicationLedger }),
+}) : null;
+const publication = directPublication || process.env.MASHANG_PUBLISH_SERVICE_URL ? new PublicationOperation({ directory: process.env.MASHANG_PUBLISH_SNAPSHOT_DIR || `${homedir()}/.mashang-hub/publication-snapshots`, serviceURL: process.env.MASHANG_PUBLISH_SERVICE_URL, handler: directExecutor ? directExecutor.handle.bind(directExecutor) : null }) : null;
 const publishingEnabled = process.env.MASHANG_PUBLISH_ENABLED === "1";
 const publishing = publishingEnabled ? new PublishGate({
   directory: process.env.MASHANG_PUBLISH_GATE_DIR || `${homedir()}/.mashang-hub/publish-gate`,
   root: process.env.MASHANG_PUBLISH_ROOT || join(homedir(), "Documents/github/mashang-publish"),
 }) : null;
+if (publication && publishingEnabled) throw Error('PUBLISH_MODES_CONFLICT');
 const workspaces = buildWorkspaces(process.env);
 const defaultWorkspace = resolveWorkspace(workspaces, DEFAULT_WORKSPACE_ID);
 const mappings = new Map();
@@ -139,6 +152,8 @@ async function handleTask(task) {
   send({ type: "task.running", taskId: task.taskId, sessionId: task.sessionId });
   const mappingKey = sessionMappingKey(workspace.id, `${publishingEnabled ? "guarded:" : ""}${task.sessionId}`);
   try {
+    const preview = publication && await publication.preview(task);
+    if (preview) { send({ type: "agent.message.completed", taskId: task.taskId, sessionId: task.sessionId, ...preview }); send({ type: "task.completed", taskId: task.taskId, sessionId: task.sessionId }); return; }
     if (publishing) {
       const result = await publishing.handle(task, controller.signal, () => { record.externalEffectPossible = true; send({ type: "task.running", taskId: task.taskId, sessionId: task.sessionId, externalEffectPossible: true }); });
       if (result) {
@@ -159,7 +174,7 @@ async function handleTask(task) {
     sessionToTask.set(openCodeSessionId, task.taskId);
     send({ type: "opencode.request.sent", taskId: task.taskId, sessionId: task.sessionId, openCodeSessionId });
     console.log(`opencode request started: ${task.taskId} workspace=${workspace.id}`);
-    const response = await openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", directory: workspace.root, body: JSON.stringify({ model: task.model, ...(publishingEnabled ? { tools: { "*": false } } : {}), parts: [{ type: "text", text: publishingEnabled ? `${task.prompt}\n\n本地能力：mashang-publish 位于 ${publishing.root}。文字发布由 Worker 确认入口执行。支持用户输入“把这段文字发布到微博：正文”，可用 [private,ai] 指定可见性与声明。只提供说明，不模拟确认，不声称已发布。此会话全部工具已禁用。` : task.prompt }] }), signal: controller.signal });
+    const response = await openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", directory: workspace.root, body: JSON.stringify({ model: task.model, ...((publishingEnabled || (publication && workspace.id === "publish")) ? { tools: { "*": false } } : { tools: { question: false } }), parts: [{ type: "text", text: publishingEnabled ? `${task.prompt}\n\n本地能力：mashang-publish 位于 ${publishing.root}。文字发布由 Worker 确认入口执行。支持用户输入“把这段文字发布到微博：正文”，可用 [private,ai] 指定可见性与声明。只提供说明，不模拟确认，不声称已发布。此会话全部工具已禁用。` : publication && workspace.id === "publish" ? `你正在 Publish 工作空间起草或审阅文字。直接给出可审阅的短文案；信息不足时采用合理默认并说明，不调用工具或等待交互式提问。不执行发布。\n\n${task.prompt}` : task.prompt }] }), signal: controller.signal });
     sessionToTask.delete(openCodeSessionId);
     send({ type: "opencode.response.received", taskId: task.taskId, sessionId: task.sessionId, openCodeSessionId });
     const text = (response.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n");
@@ -205,17 +220,20 @@ async function publishRuntimeSnapshot() {
 async function handleControlRequest(message) {
   if (activeControls.has(message.controlId)) return;
   if (!journal.begin(message)) { sendReconciliation([{ ...message, taskId: message.controlId }]); return; }
+  if (message.snapshotRef) { journal.entries[message.controlId].operation = message; journal.flush(); }
   const controller = new AbortController();
   activeControls.set(message.controlId, controller);
   console.log(`control received: ${message.controlId} op=${message.op} target=${message.targetId}`);
   try {
-    const result = await executeControl(runtimeRegistry, {
+    const result = publication && message.targetId === PUBLISH_OPERATION
+      ? await publication.request(message)
+      : await executeControl(runtimeRegistry, {
       op: message.op,
       targetId: message.targetId,
       signal: controller.signal,
       onOperationStatus: publishRuntimeSnapshot,
     });
-    send({ type: "runtime.control.result", controlId: message.controlId, status: result.status, reason: result.reason, code: result.code ?? null });
+    send({ type: "runtime.control.result", controlId: message.controlId, status: result.status, reason: result.reason, code: result.code ?? null, ...(message.snapshotRef ? { resultUrl: result.resultUrl } : {}) });
     console.log(`control result sent: ${message.controlId} status=${result.status} reason=${result.reason}`);
   } catch (error) {
     send({ type: "runtime.control.result", controlId: message.controlId, status: "FAILED", reason: "EXEC_ERROR", code: null });
@@ -234,7 +252,17 @@ function handlePermissionReply(message) {
   const directory = sessionWorkspace.get(openCodeSessionId) || defaultWorkspace?.root || projectRoot;
   openCode(`/permission/${encodeURIComponent(message.requestId)}/reply`, { method: "POST", directory, body: JSON.stringify({ response: message.response }) }).catch(() => {});
 }
-function sendReconciliation(requests) {
+async function readOperationPreview(message) {
+  try { send({ type: 'artifact.response', requestId: message.requestId, ...await publication.readPreview(message) }); }
+  catch { send({ type: 'artifact.response', requestId: message.requestId, error: 'SNAPSHOT_UNAVAILABLE' }); }
+}
+async function sendReconciliation(requests) {
+  if (publication) for (const request of requests) {
+    const entry = journal.entries[request.taskId];
+    if (!entry?.operation || entry.events.some(event => event.type === 'runtime.control.result' && ['COMPLETED', 'FAILED'].includes(event.status)) || activeControls.has(request.taskId) || entry.attemptId !== request.attemptId || entry.dispatchId !== request.dispatchId) continue;
+    const result = await publication.request(entry.operation, true);
+    if (result.status !== 'UNKNOWN') journal.record({ type: 'runtime.control.result', controlId: request.taskId, ...result });
+  }
   const records = journal.reconcile(requests, (id, executor) => executor === 'agent' ? Boolean(activeTasks.get(id) && !activeTasks.get(id).controller.signal.aborted) : Boolean(activeControls.get(id) && !activeControls.get(id).signal.aborted));
   send({ type: 'worker.reconcile', workerId, records });
 }
@@ -242,7 +270,7 @@ async function register() { runtimeSequence = 0; await publishRegistration(); li
 function connect() {
   const url = new URL(hubURL); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = "/worker";
   socket = new WebSocket(url, { headers: { Authorization: `Bearer ${workerSecret}` } });
-  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "worker.reconcile.request") sendReconciliation(message.tasks || []); else if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") handlePermissionReply(message); } catch { /* Keep worker alive on malformed control messages. */ } });
+  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "operation.preview.request" && publication) readOperationPreview(message); else if (message.type === "worker.reconcile.request") sendReconciliation(message.tasks || []); else if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") handlePermissionReply(message); } catch { /* Keep worker alive on malformed control messages. */ } });
   socket.on("close", () => setTimeout(connect, 2000)); socket.on("error", () => socket.close());
 }
 await loadMappings(); setInterval(heartbeat, heartbeatMs); setInterval(publishRuntimeSnapshot, runtimeSnapshotMs); connect();
