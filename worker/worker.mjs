@@ -2,7 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { PublishGate, TOOL_DENIAL, verifiedToolDenial } from "./publishing/gate.mjs";
 import { WebSocket } from "ws";
 import { resolveLocalArtifact } from "./artifact-resolver.mjs";
 import { buildRegistry } from "./runtime/registry.mjs";
@@ -18,6 +19,11 @@ const opencodeURL = process.env.OPENCODE_URL || "http://127.0.0.1:4096";
 const projectRoot = process.env.MASHANG_SERVICE_ROOT;
 const heartbeatMs = Number(process.env.WORKER_HEARTBEAT_MS || 10000);
 const stateFile = process.env.WORKER_STATE_FILE || `${homedir()}/.mashang-hub/worker-state.json`;
+const publishingEnabled = process.env.MASHANG_PUBLISH_ENABLED === "1";
+const publishing = publishingEnabled ? new PublishGate({
+  directory: process.env.MASHANG_PUBLISH_GATE_DIR || `${homedir()}/.mashang-hub/publish-gate`,
+  root: process.env.MASHANG_PUBLISH_ROOT || join(homedir(), "Documents/github/mashang-publish"),
+}) : null;
 const workspaces = buildWorkspaces(process.env);
 const defaultWorkspace = resolveWorkspace(workspaces, DEFAULT_WORKSPACE_ID);
 const mappings = new Map();
@@ -108,11 +114,12 @@ async function listenOpenCodeEvents() {
     const response = await openCode("/event", { headers: { accept: "text/event-stream" } }); if (!response.ok || !response.body) throw new Error(`event HTTP ${response.status}`);
     console.log("opencode connected"); send({ type: "worker.status", workerId, status: busy ? "BUSY" : "ONLINE", opencode: "CONNECTED" }); await publishRegistration();
     eventReader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); if (type.includes("permission")) { const requestId = event.properties?.id || event.properties?.permissionID; const openCodeSessionId = event.properties?.sessionID; if (requestId && openCodeSessionId) permissionSession.set(requestId, openCodeSessionId); send({ type: "permission.requested", requestId, request: event.properties }); } else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
+    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); if (type.includes("permission") && !publishingEnabled) { const requestId = event.properties?.id || event.properties?.permissionID; const openCodeSessionId = event.properties?.sessionID; if (requestId && openCodeSessionId) permissionSession.set(requestId, openCodeSessionId); send({ type: "permission.requested", requestId, request: event.properties }); } else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
   } catch { send({ type: "worker.status", workerId, status: "ERROR", opencode: "DISCONNECTED" }); setTimeout(listenOpenCodeEvents, 3000); }
   finally { listening = false; }
 }
 async function handleTask(task) {
+  if (activeTasks.has(task.taskId)) return;
   console.log(`task received: ${task.taskId}`);
   const workspace = resolveWorkspace(workspaces, task.workspaceId);
   if (!workspace) {
@@ -127,17 +134,29 @@ async function handleTask(task) {
   busy += 1;
   send({ type: "task.accepted", taskId: task.taskId, sessionId: task.sessionId }); console.log(`task accepted: ${task.taskId}`);
   send({ type: "task.running", taskId: task.taskId, sessionId: task.sessionId });
-  const mappingKey = sessionMappingKey(workspace.id, task.sessionId);
+  const mappingKey = sessionMappingKey(workspace.id, `${publishingEnabled ? "guarded:" : ""}${task.sessionId}`);
   try {
+    if (publishing) {
+      const result = await publishing.handle(task, controller.signal, () => { record.externalEffectPossible = true; send({ type: "task.running", taskId: task.taskId, sessionId: task.sessionId, externalEffectPossible: true }); });
+      if (result) {
+        send({ type: "agent.message.completed", taskId: task.taskId, sessionId: task.sessionId, ...result });
+        send({ type: "task.completed", taskId: task.taskId, sessionId: task.sessionId });
+        return;
+      }
+    }
     let openCodeSessionId = mappings.get(mappingKey);
-    if (!openCodeSessionId) { const session = await openCodeJSON("/session", { method: "POST", directory: workspace.root, body: JSON.stringify({ title: `mashang-hub:${workspace.id}` }) }); openCodeSessionId = session.id; mappings.set(mappingKey, openCodeSessionId); await saveMappings(); }
+    if (!openCodeSessionId) { const session = await openCodeJSON("/session", { method: "POST", directory: workspace.root, body: JSON.stringify({ title: `mashang-hub:${workspace.id}`, ...(publishingEnabled ? { permission: TOOL_DENIAL } : {}) }) }); openCodeSessionId = session.id; mappings.set(mappingKey, openCodeSessionId); await saveMappings(); }
+    if (publishingEnabled) {
+      const session = await openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}`, { directory: workspace.root });
+      if (!verifiedToolDenial(session)) throw new Error("OPENCODE_PERMISSION_GUARD_UNVERIFIED");
+    }
     send({ type: "session.mapped", sessionId: task.sessionId, taskId: task.taskId, openCodeSessionId });
     record.openCodeSessionId = openCodeSessionId;
     sessionWorkspace.set(openCodeSessionId, workspace.root);
     sessionToTask.set(openCodeSessionId, task.taskId);
     send({ type: "opencode.request.sent", taskId: task.taskId, sessionId: task.sessionId, openCodeSessionId });
     console.log(`opencode request started: ${task.taskId} workspace=${workspace.id}`);
-    const response = await openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", directory: workspace.root, body: JSON.stringify({ model: task.model, parts: [{ type: "text", text: task.prompt }] }), signal: controller.signal });
+    const response = await openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", directory: workspace.root, body: JSON.stringify({ model: task.model, ...(publishingEnabled ? { tools: { "*": false } } : {}), parts: [{ type: "text", text: publishingEnabled ? `${task.prompt}\n\n本地能力：mashang-publish 位于 ${publishing.root}。文字发布由 Worker 确认入口执行。支持用户输入“把这段文字发布到微博：正文”，可用 [private,ai] 指定可见性与声明。只提供说明，不模拟确认，不声称已发布。此会话全部工具已禁用。` : task.prompt }] }), signal: controller.signal });
     sessionToTask.delete(openCodeSessionId);
     send({ type: "opencode.response.received", taskId: task.taskId, sessionId: task.sessionId, openCodeSessionId });
     const text = (response.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n");
@@ -152,7 +171,7 @@ async function handleTask(task) {
       send({ type: "task.cancelled", taskId: task.taskId, sessionId: task.sessionId, source });
       console.log(`task cancelled: ${task.taskId} source=${source}`);
     } else {
-      send({ type: "task.failed", taskId: task.taskId, sessionId: task.sessionId, error: error.message });
+      send({ type: "task.failed", taskId: task.taskId, sessionId: task.sessionId, error: record.externalEffectPossible ? "外部操作结果不确定（UNCERTAIN），请人工核对；不会自动重试。" : error.message });
       console.log(`task failed: ${task.taskId}`);
     }
   } finally {
@@ -205,6 +224,7 @@ function handleControlCancel(message) {
   if (controller) controller.abort();
 }
 function handlePermissionReply(message) {
+  if (publishingEnabled) return; // No model tool approval can bypass the Worker gate.
   const openCodeSessionId = permissionSession.get(message.requestId);
   const directory = sessionWorkspace.get(openCodeSessionId) || defaultWorkspace?.root || projectRoot;
   openCode(`/permission/${encodeURIComponent(message.requestId)}/reply`, { method: "POST", directory, body: JSON.stringify({ response: message.response }) }).catch(() => {});

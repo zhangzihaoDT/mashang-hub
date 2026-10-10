@@ -1,4 +1,8 @@
-# mashang-hub V0.2
+# mashang-hub
+
+Personal Task Orchestrator — 个人任务编排与控制中心。
+
+代码版本以 package.json 为准；部署版本以实际镜像 revision 为准。历史 V0.x 是能力里程碑，不等同于 npm 版本。
 
 Cloud control plane plus local execution worker. Hub does not access the local dataset or OpenCode directly. Worker is the only component that connects to `127.0.0.1:4096` and reads `mashang-service`.
 
@@ -286,9 +290,17 @@ Configure Sealos ingress for HTTPS and use the resulting `https://` URL as the W
 ## Known Limitations
 
 - Hub and Worker state are currently in memory; restart recovery of task state is limited.
-- Session mappings are held by the Worker process and are not yet persisted to SQLite.
+- Worker session mappings are persisted best-effort to a local JSON file; this is not full task recovery.
 - One active Worker is supported; there is no scheduling or multi-worker routing.
 - Artifact payloads are base64 encoded in the WebSocket response and capped at 20 MB on the Worker.
 - Full browser/mobile and Sealos deployment acceptance still require manual environment testing.
 
 The `myknbase` Worker service and workspace now point to V2 (`~/Documents/github/mashang-knbase`), displayed as **mashang-knbase**, at `http://127.0.0.1:4317`. The Worker starts it with `npm start` and probes `/api/tree`. `MYKNBASE_ROOT` and `MYKNBASE_URL` remain available as overrides. V1 (`~/Desktop/myknbase`, port 7870) is no longer the default.
+
+## 对话文字发布（实验，默认关闭，待凭证隔离）
+
+本地 Worker 可通过 `MASHANG_PUBLISH_ENABLED=1` 启用受控文字发布入口。用户在原窗口输入“把这段文字发布到微博：正文”，查看正文、公开范围和内容声明后回复“确认发布”。执行仍由独立 mashang-publish CLI 完成；Hub 不访问微博凭证。
+
+启用此模式会将该 Worker 创建的所有 Hub OpenCode 会话工具权限设为 deny-all，防止 Agent 用 Shell 绕过确认。因此原有 Agent 工具能力会受限；当前不支持同时开放任意本地执行工具。发布依靠 Worker 持久化确认与防重记录，异常保持 UNCERTAIN，不自动重试。配置、Mock 验证、恢复约束和待真实验收项见 [对话发布验收报告](docs/publishing-acceptance.md)。本轮没有部署或真实发布。
+
+正式 Publishing 启用的前置条件是 OS 凭证隔离，并保留 OpenCode 普通工具。现有 deny-all 模式仅用于实验验收，不是正式方案。实施计划见 [任务编排演进](docs/task-orchestration.md)。

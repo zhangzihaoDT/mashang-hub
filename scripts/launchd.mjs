@@ -110,6 +110,11 @@ export function buildLaunchdAgents({ root = ROOT, home = homedir(), env = proces
   };
   const passthrough = [
     "WORKER_ID",
+    "WORKER_STATE_FILE",
+    "MASHANG_WORKSPACES_CONFIG",
+    "MASHANG_PUBLISH_ENABLED",
+    "MASHANG_PUBLISH_ROOT",
+    "MASHANG_PUBLISH_GATE_DIR",
     "MASHANG_RUNTIME_CONFIG",
     "MASHANG_FETCH_ROOT",
     "MYKNBASE_ROOT",

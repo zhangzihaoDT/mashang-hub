@@ -17,6 +17,9 @@ const env = {
   OPENCODE_URL: "http://127.0.0.1:4096",
   OPENCODE_BIN: "/opt/homebrew/bin/opencode",
   PATH: "/opt/homebrew/bin:/usr/bin:/bin",
+  MASHANG_PUBLISH_ENABLED: "1",
+  MASHANG_PUBLISH_ROOT: "/mock/publish",
+  MASHANG_PUBLISH_GATE_DIR: "/mock/gate",
 };
 
 const agents = buildLaunchdAgents({ root, home, env, nodePath: "/opt/homebrew/bin/node", opencodePath: env.OPENCODE_BIN });
@@ -32,6 +35,10 @@ assert.equal(worker.plist.EnvironmentVariables.HUB_URL, "https://mashang-hub.exa
 assert.equal(worker.plist.EnvironmentVariables.WORKER_SECRET, "secret<&");
 assert.equal(worker.plist.EnvironmentVariables.MASHANG_SERVICE_ROOT, `${home}/Documents/github/mashang-service`);
 assert.equal(worker.plist.EnvironmentVariables.OPENCODE_URL, "http://127.0.0.1:4096");
+assert.equal(worker.plist.EnvironmentVariables.MASHANG_PUBLISH_ENABLED, "1");
+assert.equal(worker.plist.EnvironmentVariables.MASHANG_PUBLISH_ROOT, "/mock/publish");
+assert.equal(worker.plist.EnvironmentVariables.MASHANG_PUBLISH_GATE_DIR, "/mock/gate");
+assert.equal(opencode.plist.EnvironmentVariables.MASHANG_PUBLISH_ENABLED, undefined);
 for (const agent of agents) {
   assert.equal(agent.plist.RunAtLoad, true);
   assert.equal(agent.plist.KeepAlive, true);

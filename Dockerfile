@@ -1,4 +1,8 @@
 FROM node:22-alpine
+ARG VCS_REF=unknown
+ARG VERSION=unknown
+LABEL org.opencontainers.image.revision=$VCS_REF
+LABEL org.opencontainers.image.version=$VERSION
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev

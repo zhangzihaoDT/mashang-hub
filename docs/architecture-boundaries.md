@@ -81,3 +81,7 @@ mashang-service
 - 是否能把该逻辑放到 Worker 或 `mashang-service` 而不改变 Hub 协议
 
 如果只是为了支持一个新业务能力而修改 Hub，默认先暂停并重新检查边界，而不是继续增加映射表。
+
+## Personal Task Orchestrator
+
+Hub 是个人任务编排与控制中心。Conversation 只提供交互与上下文，Task 管理生命周期、审批、调度与恢复。Agent、Operation、External Action 共享通用任务管理层，业务执行仍属于 Worker / Capability。分阶段契约见 [task-orchestration.md](task-orchestration.md)。

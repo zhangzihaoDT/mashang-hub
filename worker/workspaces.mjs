@@ -63,6 +63,11 @@ export function buildWorkspaces(env = process.env) {
     outputRoots: ["processed"],
   });
 
+  if (env.MASHANG_PUBLISH_ENABLED === "1") byId.set("publish", {
+    id: "publish", label: "mashang-publish", root: env.MASHANG_PUBLISH_ROOT || join(homedir(), "Documents/github/mashang-publish"),
+    outputRoots: [],
+  });
+
   for (const entry of loadConfig(env.MASHANG_WORKSPACES_CONFIG)) {
     const normalized = normalizeEntry(entry);
     if (normalized) byId.set(normalized.id, normalized);

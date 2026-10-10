@@ -56,6 +56,7 @@ function clearTaskTimers(task) { clearTimeout(task.timers.soft); clearTimeout(ta
 
 function finalizeTask(task, { event, status, reason, error }) {
   if (isTerminal(task.status)) return false;
+  if (task.externalEffectPossible && ["FAILED", "TIMEOUT", "CANCELLED", "INTERRUPTED"].includes(status)) error = "外部操作结果可能不确定，请人工核对；不要自动重试。";
   task.status = status;
   task.updatedAt = Date.now();
   clearTaskTimers(task);
@@ -206,6 +207,7 @@ function onWorkerMessage(message) {
   if (message.type === "task.accepted" || message.type === "task.running") {
     const task = tasks.get(message.taskId);
     if (task && !isTerminal(task.status)) {
+      if (message.externalEffectPossible === true) task.externalEffectPossible = true;
       task.status = message.type === "task.accepted" ? "SUBMITTING" : "RUNNING";
       task.updatedAt = Date.now();
       updateTurn(task.taskId, { status: task.status });
@@ -386,7 +388,7 @@ const server = createServer(async (req, res) => {
     createTurn({ conversationId: session.id, turnId, taskId: task.taskId, model: task.model, workspaceId });
     scheduleWatchdog(task);
     console.log(`task created: ${task.taskId} conversation=${session.id} turn=${turnId} workspace=${workspaceId || "default"}`);
-    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, sessionId: session.id, turnId, prompt: input.parts?.find((part) => part.type === "text")?.text || "", model: input.model, workspaceId });
+    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, sessionId: session.id, turnId, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
     if (!dispatched) { console.log(`task dispatch failed: ${task.taskId} session=${session.id}`); finalizeTask(task, { event: "task.failed", status: "FAILED", reason: REASONS.OPENCODE_ERROR, error: "Mac Worker is offline" }); return json(res, 503, { error: "Mac Worker is offline", taskId: task.taskId }); }
     console.log(`task dispatched to worker: ${task.taskId} session=${session.id} worker=${activeWorker.workerId}`);
     return json(res, 202, publicTask(task));
