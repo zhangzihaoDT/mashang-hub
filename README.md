@@ -343,3 +343,13 @@ P3 的环境与签名授权要求见 [Publishing 隔离方案](docs/publishing-i
 ## UI 0.3.2 · 统一入口
 
 顶部 Service / Fetch / Knbase / Publish 切换整个工作空间。Service / Publish 保留各自对话，Fetch / Knbase 保留独立 UI；切换不执行任务。详情、可达地址配置与浏览器验收见 [0.3.2 工作空间说明](docs/ui-workspaces-v0.3.2.md)。正式 Publishing 仍默认关闭。
+
+### Hub Runtime Execution Policy
+
+从 Hub 发起的 Agent 任务统一为 `runtime_execution`，不进行软件开发。Worker 每轮通过 OpenCode 的 `system` 字段注入此约定，覆盖会话中旧的开发或“只能调用已有能力”行为。现有 Publish 草稿与发布权限流程保持独立。
+
+Agent 可以调用已有业务能力，读取数据、代码和业务文档，使用 `python -c`、临时 SQL/Python 分析脚本，以及生成 CSV、Markdown、图表等产物。临时脚本和产物写入工作空间规定的 `scratch/` 或 `outputs/`；业务数据按授权和既有契约更新。
+
+不得修改项目源代码、模板、Agent 规则、开发配置、依赖及测试文件，不运行开发测试、重构、自动修复或 Git 变更操作。能力不足时可做临时分析；必须改变软件实现或发现程序缺陷时报告问题，交给独立开发任务。数据新鲜度、业务口径检查、刷新校验、dry-run 和推送预览继续执行。
+
+Worker 开放 `write` 用于临时分析及产物生成，关闭 `edit`、`apply_patch`、`multiedit`。这是指令约定与工具限制，不是按路径实施的文件系统沙箱；`write`、bash 和 MCP 均须遵守软件保护边界。规则由本地 Worker 生效，无需重建 Hub 镜像。

@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { PublishGate, TOOL_DENIAL, verifiedToolDenial } from "./publishing/gate.mjs";
 import { requestExecutionCancel, waitForExecution } from './opencode-execution.mjs';
 import { ExecutionJournal } from "./execution-journal.mjs";
+import { capabilityExecutionOptions } from "./execution-mode.mjs";
 import { WebSocket } from "ws";
 import { resolveLocalArtifact } from "./artifact-resolver.mjs";
 import { buildRegistry } from "./runtime/registry.mjs";
@@ -217,7 +218,7 @@ async function handleTask(task) {
     saveExecutionEvidence(task.taskId, record);
     send({ type: "opencode.request.sent", taskId: task.taskId, sessionId: task.sessionId, openCodeSessionId });
     console.log(`opencode request started: ${task.taskId} workspace=${workspace.id}`);
-    const result = await Promise.race([openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", directory: workspace.root, body: JSON.stringify({ messageID: record.userMessageId, model: task.model, ...((publishingEnabled || (publication && workspace.id === "publish")) ? { tools: { "*": false } } : { tools: { question: false } }), parts: [{ type: "text", text: publishingEnabled ? `${task.prompt}\n\n本地能力：mashang-publish 位于 ${publishing.root}。文字发布由 Worker 确认入口执行。支持用户输入“把这段文字发布到微博：正文”，可用 [private,ai] 指定可见性与声明。只提供说明，不模拟确认，不声称已发布。此会话全部工具已禁用。` : publication && workspace.id === "publish" ? `你正在 Publish 工作空间起草或审阅文字。直接给出可审阅的短文案；信息不足时采用合理默认并说明，不调用工具或等待交互式提问。不执行发布。\n\n${task.prompt}` : task.prompt }] }), signal: controller.signal }).then(response => ({ response })), reconciliation.then(async () => ({ evidence: await waitForExecution(openCodeJSON, record, executionWaitOptions(task.taskId, record)) }))]);
+    const result = await Promise.race([openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", directory: workspace.root, body: JSON.stringify({ messageID: record.userMessageId, model: task.model, ...((publishingEnabled || (publication && workspace.id === "publish")) ? { tools: { "*": false } } : capabilityExecutionOptions()), parts: [{ type: "text", text: publishingEnabled ? `${task.prompt}\n\n本地能力：mashang-publish 位于 ${publishing.root}。文字发布由 Worker 确认入口执行。支持用户输入“把这段文字发布到微博：正文”，可用 [private,ai] 指定可见性与声明。只提供说明，不模拟确认，不声称已发布。此会话全部工具已禁用。` : publication && workspace.id === "publish" ? `你正在 Publish 工作空间起草或审阅文字。直接给出可审阅的短文案；信息不足时采用合理默认并说明，不调用工具或等待交互式提问。不执行发布。\n\n${task.prompt}` : task.prompt }] }), signal: controller.signal }).then(response => ({ response })), reconciliation.then(async () => ({ evidence: await waitForExecution(openCodeJSON, record, executionWaitOptions(task.taskId, record)) }))]);
     if (result.evidence) {
       await settleExecutionEvidence(task, workspace, result.evidence, record.source);
       return;

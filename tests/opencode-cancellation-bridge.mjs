@@ -33,6 +33,13 @@ const oc = createServer(async (req, res) => {
   }
   if (req.method === 'GET') return res.end(JSON.stringify(session.messages));
   const input = JSON.parse(body), mode = input.parts[0].text;
+  assert.match(input.system, /runtime_execution/);
+  assert.match(input.system, /不得擅自进入开发流程/);
+  assert.equal(input.tools.edit, false);
+  assert.equal(input.tools.write, true);
+  assert.match(input.system, /python -c/);
+  assert.match(input.system, /Git 暂存、提交、推送/);
+  assert.equal(input.tools.apply_patch, false);
   events.push({ id, op: 'prompt' }); session.mode = mode; session.userId = input.messageID;
   session.messages.push({ info: { id: input.messageID, role: 'user' }, parts: [] }); session.busy = true; session.response = res;
   // A final answer from a previous turn must never be recovered for this request.
