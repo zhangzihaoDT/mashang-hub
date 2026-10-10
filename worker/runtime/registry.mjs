@@ -6,7 +6,7 @@ const HUB_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 const DEFAULT_OPENCODE_URL = "http://127.0.0.1:4096";
 const DEFAULT_FETCH_URL = "http://127.0.0.1:7860";
-const DEFAULT_MYKNBASE_URL = "http://127.0.0.1:7870";
+const DEFAULT_MYKNBASE_URL = "http://127.0.0.1:4317";
 
 export const DAILY_PIPELINE_STEPS = Object.freeze([
   "refresh_daily",
@@ -83,14 +83,14 @@ export function buildRegistry(env = process.env, config = null) {
   const serviceRoot = env.MASHANG_SERVICE_ROOT || join(homedir(), "Documents/github/mashang-service");
   const hubRoot = env.MASHANG_HUB_ROOT || HUB_ROOT;
   const fetchRoot = env.MASHANG_FETCH_ROOT || join(homedir(), "Documents/github/mashang-fetch");
-  const myknbaseRoot = env.MYKNBASE_ROOT || join(homedir(), "Desktop/myknbase");
+  const myknbaseRoot = env.MYKNBASE_ROOT || join(homedir(), "Documents/github/mashang-knbase");
   const runtimeDir = env.MASHANG_RUNTIME_DIR || join(hubRoot, ".local/runtime");
   const schedulerLogDir = join(serviceRoot, "logs/scheduler");
 
   const opencodeURL = trimSlash(env.OPENCODE_URL || DEFAULT_OPENCODE_URL);
   const fetchURL = trimSlash(env.MASHANG_FETCH_URL || DEFAULT_FETCH_URL);
   const myknbaseURL = trimSlash(env.MYKNBASE_URL || DEFAULT_MYKNBASE_URL);
-  const myknbasePort = portOf(myknbaseURL, "7870");
+  const myknbasePort = portOf(myknbaseURL, "4317");
   const schedulerSeries = env.MASHANG_SCHEDULER_SERIES || "";
   const probeTimeoutMs = Number(env.RUNTIME_PROBE_TIMEOUT_MS) > 0 ? Number(env.RUNTIME_PROBE_TIMEOUT_MS) : 2500;
   const verifyMs = Number(env.RUNTIME_CONTROL_VERIFY_MS) > 0 ? Number(env.RUNTIME_CONTROL_VERIFY_MS) : 15000;
@@ -129,16 +129,16 @@ export function buildRegistry(env = process.env, config = null) {
       },
       {
         id: "myknbase",
-        label: "myknbase",
+        label: "mashang-knbase",
         group: "APPS",
         category: "service",
         description: "个人本地知识库",
         openUrl: originOf(myknbaseURL),
-        probe: { type: "http", url: `${myknbaseURL}/api/health` },
-        match: "server/index.js",
+        probe: { type: "http", url: `${myknbaseURL}/api/tree` },
+        match: "node(?: .*?)? server/main\\.mjs$",
         logs: [],
         control: {
-          start: { command: "npm", args: ["run", "up"], cwd: myknbaseRoot, detach: true, env: { MYKNBASE_PORT: String(myknbasePort) } },
+          start: { command: "npm", args: ["start"], cwd: myknbaseRoot, detach: true, env: { PORT: String(myknbasePort) } },
           stop: { signal: "SIGTERM", timeoutMs: stopTimeoutMs },
         },
       },

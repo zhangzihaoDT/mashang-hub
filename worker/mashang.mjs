@@ -30,7 +30,7 @@ Environment:
   MASHANG_SCHEDULER_SERIES  optional SERIES passed to the scheduler/daily job
   OPENCODE_URL           default http://127.0.0.1:4096
   MASHANG_FETCH_URL      default http://127.0.0.1:7860
-  MYKNBASE_URL           default http://127.0.0.1:7870
+  MYKNBASE_URL           default http://127.0.0.1:4317
   HUB_URL                worker registration target (default ws://127.0.0.1:3000)
   MASHANG_RUNTIME_CONFIG path to a JSON {services,jobs,operations} override
   RUNTIME_PROBE_TIMEOUT_MS  per-probe timeout, default 2500

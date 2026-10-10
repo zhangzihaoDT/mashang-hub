@@ -290,3 +290,5 @@ Configure Sealos ingress for HTTPS and use the resulting `https://` URL as the W
 - One active Worker is supported; there is no scheduling or multi-worker routing.
 - Artifact payloads are base64 encoded in the WebSocket response and capped at 20 MB on the Worker.
 - Full browser/mobile and Sealos deployment acceptance still require manual environment testing.
+
+The `myknbase` Worker service and workspace now point to V2 (`~/Documents/github/mashang-knbase`), displayed as **mashang-knbase**, at `http://127.0.0.1:4317`. The Worker starts it with `npm start` and probes `/api/tree`. `MYKNBASE_ROOT` and `MYKNBASE_URL` remain available as overrides. V1 (`~/Desktop/myknbase`, port 7870) is no longer the default.

@@ -32,7 +32,7 @@ assert.equal(allupdate.enabled, true);
 assert.equal(registry.dependencies.find((d) => d.id === "opencode").probe.url, "http://127.0.0.1:5000/config/providers");
 assert.equal(registry.services.find((s) => s.id === "fetch").probe.url, "http://127.0.0.1:6000/api/formats");
 assert.equal(registry.services.find((s) => s.id === "fetch").openUrl, "http://127.0.0.1:6000");
-assert.equal(registry.services.find((s) => s.id === "myknbase").probe.url, "http://127.0.0.1:7000/api/health");
+assert.equal(registry.services.find((s) => s.id === "myknbase").probe.url, "http://127.0.0.1:7000/api/tree");
 assert.equal(registry.services.find((s) => s.id === "myknbase").openUrl, "http://127.0.0.1:7000");
 assert.equal(registry.probeTimeoutMs, 1000);
 
@@ -83,3 +83,12 @@ assert.equal(overridden.operations.length, 3);
 assert.ok(overridden.operations.some((operation) => operation.id === "future-no-arg"), "Worker config can add an operation without a Hub mapping");
 
 console.log("Runtime registry checks passed");
+
+const knbase = buildRegistry({}).services.find(s => s.id === "myknbase");
+assert.equal(knbase.openUrl, "http://127.0.0.1:4317");
+assert.ok(knbase.control.start.cwd.endsWith("Documents/github/mashang-knbase"));
+assert.deepEqual(knbase.control.start.args, ["start"]);
+assert.equal(knbase.control.start.env.PORT, "4317");
+assert.ok(new RegExp(knbase.match).test("node server/main.mjs"));
+assert.ok(!new RegExp(knbase.match).test("node server/index.js"));
+assert.ok(!new RegExp(knbase.match).test("node server/main.mjs --root /tmp/trial --port 4318"));

@@ -47,7 +47,7 @@ function loadConfig(path) {
  */
 export function buildWorkspaces(env = process.env) {
   const serviceRoot = env.MASHANG_SERVICE_ROOT || join(homedir(), "Documents/github/mashang-service");
-  const myknbaseRoot = env.MYKNBASE_ROOT || join(homedir(), "Desktop/myknbase");
+  const myknbaseRoot = env.MYKNBASE_ROOT || join(homedir(), "Documents/github/mashang-knbase");
 
   const byId = new Map();
   byId.set(DEFAULT_WORKSPACE_ID, {
@@ -58,7 +58,7 @@ export function buildWorkspaces(env = process.env) {
   });
   byId.set("myknbase", {
     id: "myknbase",
-    label: "myknbase",
+    label: "mashang-knbase",
     root: myknbaseRoot,
     outputRoots: ["processed"],
   });
