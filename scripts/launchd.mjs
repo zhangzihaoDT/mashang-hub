@@ -118,6 +118,8 @@ export function buildLaunchdAgents({ root = ROOT, home = homedir(), env = proces
     "MASHANG_PUBLISH_GATE_DIR",
     "MASHANG_RUNTIME_CONFIG",
     "MASHANG_FETCH_ROOT",
+    "MASHANG_FETCH_UI_URL",
+    "MYKNBASE_UI_URL",
     "MYKNBASE_ROOT",
     "MASHANG_FETCH_URL",
     "MYKNBASE_URL",

@@ -92,3 +92,8 @@ assert.equal(knbase.control.start.env.PORT, "4317");
 assert.ok(new RegExp(knbase.match).test("node server/main.mjs"));
 assert.ok(!new RegExp(knbase.match).test("node server/index.js"));
 assert.ok(!new RegExp(knbase.match).test("node server/main.mjs --root /tmp/trial --port 4318"));
+
+const publicUi = buildRegistry({MASHANG_FETCH_UI_URL:"https://fetch.example.test/ui/",MYKNBASE_UI_URL:"https://knbase.example.test/"});
+assert.equal(publicUi.services.find(service=>service.id==="fetch").openUrl,"https://fetch.example.test/ui/");
+assert.equal(publicUi.services.find(service=>service.id==="myknbase").openUrl,"https://knbase.example.test/");
+assert.equal(publicUi.services.find(service=>service.id==="fetch").probe.url,"http://127.0.0.1:7860/api/formats");

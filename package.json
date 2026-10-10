@@ -1,6 +1,6 @@
 {
   "name": "mashang-hub",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "bin": {
@@ -40,7 +40,8 @@
     "task:backup": "node scripts/task-backup.mjs",
     "test:recovery": "node tests/task-policy.mjs && node tests/execution-journal.mjs && node tests/long-task-bridge.mjs && node tests/reconciliation-bridge.mjs",
     "test:long-task": "LONG_TASK_MS=185000 node tests/long-task-bridge.mjs",
-    "image:build": "node scripts/build-image.mjs"
+    "image:build": "node scripts/build-image.mjs",
+    "test:workbench-browser": "node tests/workbench-browser.mjs"
   },
   "engines": {
     "node": ">=22.13"

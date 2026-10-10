@@ -284,7 +284,7 @@ docker run --rm -p 3000:3000 -v mashang-hub-data:/data \
   -e PORT=3000 \
   -e HUB_ACCESS_TOKEN=<private-user-token> \
   -e WORKER_SECRET=<private-worker-secret> \
-  mashang-hub:0.3.1
+  mashang-hub:0.3.2
 ```
 
 Configure Sealos ingress for HTTPS and use the resulting `https://` URL as the Worker `HUB_URL`. The actual Sealos deployment and phone-over-cellular test are not performed by this repository change.
@@ -326,3 +326,7 @@ Worker 将执行 claim 和结果 outbox 持久化到 `WORKER_EXECUTION_JOURNAL`�
 `npm run test:long-task` 使用真实 Hub/Worker 进程和 Mock OpenCode，持续 185 秒并在期间重启 Hub，验证原执行身份与单次调用。当前完成的是 Agent 长任务与恢复纵向场景；通用排队、后台任务列表和 External Action 正式接入仍待后续验收。
 
 P3 的环境与签名授权要求见 [Publishing 隔离方案](docs/publishing-isolation.md)。尚未建立隔离账户、迁移凭证、启用正式发布或进行真实发布。
+
+## UI 0.3.2 · 统一入口
+
+顶部 Service / Fetch / Knbase / Publish 切换整个工作空间。Service / Publish 保留各自对话，Fetch / Knbase 保留独立 UI；切换不执行任务。详情、可达地址配置与浏览器验收见 [0.3.2 工作空间说明](docs/ui-workspaces-v0.3.2.md)。正式 Publishing 仍默认关闭。

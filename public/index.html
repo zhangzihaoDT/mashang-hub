@@ -1,45 +1,33 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><title>mashang hub</title><link rel="icon" type="image/png" href="/raccoon.png"><link rel="apple-touch-icon" href="/raccoon.png"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/runtime.css"><style>html,body{height:100%;overflow:hidden}body{display:grid;grid-template-rows:72px minmax(0,1fr) auto}.topbar{height:auto}.workspace{height:auto;min-height:0;overflow:hidden;margin:0 auto;width:100%;padding:22px}.panel{height:100%;min-height:0;display:flex;flex-direction:column}.panel-head,.session-meta,.run-state{flex-shrink:0}.messages,.result-body{min-height:0;overflow-y:auto}.messages{flex:1}.result-body{flex:1}.composer{position:static}.composer form{max-width:none}.composer textarea{min-width:0}.composer select{border:0;border-left:1px solid var(--line);background:#f7fafb;color:var(--blue);font:12px inherit;padding:0 12px;outline:0;max-width:190px}.composer select:disabled{color:var(--muted)}.message-meta{margin-top:9px;color:#9aa8b2;font-size:10px}@media(max-width:800px){body{grid-template-rows:60px minmax(0,1fr) auto}.workspace{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,1fr);padding:12px;gap:12px}.composer{padding:10px 12px}.composer select{max-width:145px;padding:0 7px}}</style><style>.login-overlay{position:fixed;inset:0;z-index:10;display:grid;place-items:center;background:#fff9eff2}.login-card{width:min(360px,calc(100vw - 36px));padding:30px;background:white;border:1px solid var(--line);border-radius:16px;box-shadow:0 18px 50px #174a7c1f;text-align:center}.login-card .mark{margin:0 auto 12px}.login-card h2{color:var(--deep);margin:0}.login-card p{color:var(--muted);font-size:12px}.login-card input{width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;margin:8px 0;box-sizing:border-box}.login-card button{width:100%;padding:11px;border:0;border-radius:8px;background:var(--blue);color:white}.login-card #loginError{color:#a35c45;font-size:12px;margin-top:8px}</style><style>/* mobile-beta: temporary override, consolidate into styles.css later */
-@media (max-width:800px){
-html,body{height:auto;overflow:visible}
-body{display:block;padding-bottom:calc(88px + env(safe-area-inset-bottom) + var(--keyboard-inset,0px))}
-.topbar{height:auto;padding:0 14px}
-.workspace{display:flex;flex-direction:column;gap:12px;padding:12px;margin:0;max-width:none;width:100%}
-.panel{height:auto;min-height:0;border-radius:12px}
-.panel-head{padding:16px 14px 12px}
-.session-meta{margin:0 12px}
-.messages{padding:14px;flex:none;overflow:visible}
-.result-body{padding:16px;flex:none;overflow:visible}
-.welcome{margin:40px 12px 0}
-.empty-result{margin-top:48px}
-.composer{position:fixed;left:0;right:0;bottom:var(--keyboard-inset,0px);padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--line);z-index:6;transition:bottom .16s ease}
-.composer form{flex-wrap:wrap;align-items:flex-end;gap:6px;padding:6px;border-radius:16px}
-.composer form:focus-within{border-color:var(--blue);box-shadow:0 6px 22px #174a7c1f}
-.composer textarea{order:1;flex:1 1 100%;min-height:42px;max-height:140px;padding:11px 12px;font-size:16px;line-height:1.45;overflow-y:auto;-webkit-overflow-scrolling:touch}
-.composer select{order:2;flex:0 1 auto;max-width:52%;min-height:40px;padding:0 10px;border:1px solid var(--line);border-radius:10px;background:#f7fafb;font-size:14px}
-.composer button{min-height:40px;border-radius:10px}
-.composer #send{order:4;margin-left:auto;padding:0 20px}
-.composer select,.login-card input{font-size:16px}
-.hint{display:none}
-.cancel{order:3;padding:0 12px;font-size:12px;border-radius:10px;margin-right:0}
-.run-state{margin:4px 12px 0;padding:6px 10px;font-size:11px;gap:6px}
-.artifacts{margin:0 12px 12px}
-.result-body pre,.bubble pre,.artifact-markdown pre{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.artifact-preview,.artifact-markdown{overflow-x:auto}
-.result-body table{display:block;overflow-x:auto}
-.debug{left:12px;right:12px;width:auto;top:auto;bottom:calc(88px + env(safe-area-inset-bottom) + var(--keyboard-inset,0px));max-height:55vh}
-}</style></head>
-  <body>
-    <header class="topbar"><div class="brand"><img class="mark" src="/raccoon.png" width="32" height="32" alt="mashang" /><div><strong>mashang</strong><small>OpenCode research desk</small></div></div><div class="topbar-right"><div id="connection" class="connection disconnected"><i></i><span>Mac Worker Offline</span></div><button id="runtimeToggle" class="runtime-toggle" type="button">Runtime</button></div></header>
-    <main class="workspace">
-      <section class="conversation panel"><div class="panel-head"><div><span class="eyebrow">WORKSPACE</span><h1>Conversation</h1></div><button id="newSession" class="quiet">New session</button></div><div id="sessionMeta" class="session-meta">正在连接 OpenCode…</div><div id="runState" class="run-state"><span class="state-dot"></span><span>等待输入</span></div><div id="messages" class="messages"><div class="welcome"><img class="avatar" src="/raccoon.png" width="42" height="42" alt="mashang" /><h2>今天想先看什么？</h2><p>把问题交给 OpenCode。它会沿用当前 Session，调用本机已有能力。</p></div></div></section>
-      <section class="result panel"><div class="panel-head"><div><span class="eyebrow">OUTPUT</span><h1>Result</h1></div><button id="debugToggle" class="quiet">Debug</button></div><article id="resultBody" class="result-body"><div id="resultContent"><div class="empty-result"><span>◌</span><p>完成一次提问后，结果会显示在这里。</p></div></div><div id="artifacts" class="artifacts hidden"></div></article></section>
-    </main>
-    <footer class="composer"><form id="promptForm"><textarea id="prompt" rows="1" placeholder="Ask mashang..." required></textarea><select id="modelSelect" aria-label="本轮模型" disabled><option>Loading models…</option></select><button type="button" id="cancel" class="cancel hidden">Cancel</button><button type="submit" id="send" disabled>Send <span>↗</span></button></form><div class="hint">Enter 发送 · Shift + Enter 换行</div></footer>
-    <aside id="runtime" class="runtime hidden"><div class="runtime-head"><strong>Runtime · <span id="runtimeWorkerId">—</span></strong><span id="runtimeState" class="runtime-state">—</span><button id="runtimeClose" type="button" aria-label="关闭 Runtime">×</button></div><div id="runtimeMeta" class="runtime-meta">正在加载…</div><div id="runtimeBody"></div></aside>
-    <aside id="debug" class="debug hidden"><div class="debug-head"><strong>Debug</strong><button id="debugClose">×</button></div><div id="debugContent"></div></aside>
-    <div id="loginOverlay" class="login-overlay hidden"><form id="loginForm" class="login-card"><img class="mark" src="/raccoon.png" width="32" height="32" alt="mashang" /><h2>mashang hub</h2><p>登录本地研究控制台</p><input id="accessToken" type="password" placeholder="Access token" autocomplete="current-password" required><button type="submit">Sign in</button><div id="loginError"></div></form></div>
-    <script type="module" src="/app.js"></script>
-  </body>
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+  <title>mashang hub · 任务工作台</title><link rel="icon" type="image/png" href="/raccoon.png"><link rel="apple-touch-icon" href="/raccoon.png">
+  <link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/runtime.css"><link rel="stylesheet" href="/workbench.css">
+</head>
+<body>
+  <header class="topbar"><div class="brand"><img class="mark" src="/raccoon.png" width="32" height="32" alt=""><div><strong>mashang<span class="brand-suffix"> hub</span></strong><small>PERSONAL TASK ORCHESTRATOR</small></div></div><div class="topbar-right"><div id="connection" class="connection disconnected"><i></i><span>Mac Worker Offline</span></div><button id="runtimeToggle" class="runtime-toggle" type="button">运行管理</button></div></header>
+  <main class="hub-shell">
+    <nav id="workspaceNav" class="workspace-nav" aria-label="工作空间">
+      <button type="button" data-workspace="service" class="workspace-tab active" aria-pressed="true"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V12m5 7V9m5 10v-6m5 6V5M3 8l6-4 5 4 7-6"/></svg></span><strong>Service</strong><small>业务分析</small></button>
+      <button type="button" data-workspace="fetch" class="workspace-tab" aria-pressed="false"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c-5 5-5 13 0 18 5-5 5-13 0-18Z"/></svg></span><strong>Fetch</strong><small>数据采集</small></button>
+      <button type="button" data-workspace="knbase" class="workspace-tab" aria-pressed="false"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h4v16H4zM10 4h4v16h-4zM16 5l3-1 4 15-3 1z"/></svg></span><strong>Knbase</strong><small>知识工作台</small></button>
+      <button type="button" data-workspace="publish" class="workspace-tab" aria-pressed="false"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 18-7-6 18-4-7-8-4Zm8 4L21 3"/></svg></span><strong>Publish</strong><small>内容起草</small></button>
+    </nav>
+    <section id="conversationWorkspace" class="task-panel panel" aria-label="对话工作空间"><div class="panel-head"><div><span id="workspaceEyebrow" class="eyebrow">BUSINESS & RESEARCH</span><h1 id="workspaceTitle">Service Workspace</h1></div><div class="task-actions"><span class="mode-badge">Conversation</span><button id="debugToggle" class="quiet" type="button">执行详情</button><button id="newSession" class="quiet" type="button">新对话 ＋</button></div></div>
+      <div id="sessionMeta" class="session-meta">连接任务环境…</div>
+      <div id="workspaceNotice" class="workspace-notice hidden">当前支持起草与审阅。正式发布尚未接入，发送不会创建受控发布操作。</div>
+      <div class="task-scroll"><div id="messages" class="messages"></div>
+        <article id="resultBody" class="result-body task-result-card"><div class="result-card-head"><div><span class="eyebrow">TASK RESULT</span><h2 id="taskTitle">等待一项新任务</h2></div><div id="runState" class="run-state"><span class="state-dot"></span><span>等待输入</span></div></div><div id="executionInfo" class="execution-info">任务状态、执行信息和结果汇集在这里。</div><div id="resultContent"><div class="empty-result"><span>↗</span><p>描述问题，确认执行后查看结论与附件。</p></div></div><div id="artifacts" class="artifacts hidden"></div></article>
+      </div>
+      <footer class="composer"><form id="promptForm"><label class="sr-only" for="prompt">任务描述</label><textarea id="prompt" rows="3" placeholder="描述业务问题、研究主题或报告要求…" required></textarea><div class="composer-toolbar"><select id="modelSelect" aria-label="本轮模型" disabled><option>正在加载模型…</option></select><div class="composer-buttons"><button type="button" id="cancel" class="cancel hidden">取消任务</button><button type="submit" id="send" disabled>确认执行 <span>↗</span></button></div></div></form><div class="hint">Enter 确认执行 · Shift + Enter 换行</div></footer>
+    </section>
+    <section id="independentWorkspace" class="independent-panel panel hidden" aria-label="独立工作空间"><div class="panel-head"><div><span class="eyebrow">CONNECTED SYSTEM</span><h1 id="independentTitle">Fetch Workspace</h1></div><span class="mode-badge">Independent UI</span></div><div class="independent-body"><span id="independentIcon" class="independent-icon">◎</span><h2 id="independentHeading">数据采集工作台</h2><p id="independentDescription"></p><div class="system-details"><div><span>服务状态</span><strong id="independentStatus">等待 Worker</strong></div><div><span>工作台地址</span><strong id="independentAddress">尚未提供</strong></div></div><a id="independentOpen" class="open-workspace hidden" target="_blank" rel="noopener noreferrer">打开独立工作台 <span>↗</span></a><p id="independentHint" class="independent-hint"></p><div class="workspace-principle">保留这个系统原有的页面与操作流程。Hub 负责入口和运行状态。</div></div></section>
+    <div class="shell-footnote"><span>一个入口，多种工作空间</span><span>选择工作空间不会启动任务</span></div>
+  </main>
+  <aside id="runtime" class="runtime hidden"><div class="runtime-head"><strong>运行管理 · <span id="runtimeWorkerId">—</span></strong><span id="runtimeState" class="runtime-state">—</span><button id="runtimeClose" type="button" aria-label="关闭运行管理">×</button></div><div id="runtimeMeta" class="runtime-meta">正在加载…</div><div id="runtimeBody"></div></aside>
+  <aside id="debug" class="debug hidden"><div class="debug-head"><strong>执行详情</strong><button id="debugClose" type="button" aria-label="关闭执行详情">×</button></div><div id="debugContent"></div></aside>
+  <div id="loginOverlay" class="login-overlay hidden"><form id="loginForm" class="login-card"><img class="mark" src="/raccoon.png" width="32" height="32" alt=""><h2>mashang hub</h2><p>登录个人任务工作台</p><input id="accessToken" type="password" placeholder="Access token" autocomplete="current-password" required><button type="submit">登录</button><div id="loginError"></div></form></div>
+  <script type="module" src="/app.js"></script>
+</body>
 </html>

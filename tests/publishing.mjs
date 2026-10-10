@@ -83,7 +83,7 @@ const appSource = await readFile(new URL('../public/app.js', import.meta.url), '
 const eventHandler = appSource.slice(appSource.indexOf('function handleServerEvent('), appSource.indexOf('\nfunction connectEvents()'));
 const browserState = { activeTaskId: null, turnActive: true, earlyEvents: [], confirmationId: null };
 let rendered;
-const context = { state: browserState, logEvent() {}, applyTaskEvent() {}, completeAssistant: (text, _model, plainText) => { rendered = { text, plainText }; }, runtimeUI: { update() {} } };
+const context = { state: browserState, conversations: { service: browserState }, logEvent() {}, applyTaskEvent() {}, completeAssistant: (text, _model, plainText) => { rendered = { text, plainText }; }, runtimeUI: { update() {} } };
 runInNewContext(eventHandler + '\nthis.handleServerEvent = handleServerEvent;', context);
 context.handleServerEvent({type:'agent.message.completed',taskId:'fast',text,plainText:true,confirmationId:preview.confirmationId});
 assert.equal(browserState.earlyEvents.length,1);assert.equal(browserState.confirmationId,null);
