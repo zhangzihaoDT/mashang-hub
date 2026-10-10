@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { PublishGate, TOOL_DENIAL, verifiedToolDenial } from "./publishing/gate.mjs";
+import { requestExecutionCancel, waitForExecution } from './opencode-execution.mjs';
 import { ExecutionJournal } from "./execution-journal.mjs";
 import { WebSocket } from "ws";
 import { resolveLocalArtifact } from "./artifact-resolver.mjs";
@@ -120,7 +121,11 @@ function cancelTask(message) {
   const record = activeTasks.get(message.taskId);
   if (!record) return;
   record.source = message.source || "timeout";
-  record.controller.abort();
+  if (!record.requestStarted) record.controller.abort();
+  // Keep the message request and session mapping alive to collect a racing result.
+  if (record.openCodeSessionId) saveExecutionEvidence(message.taskId, record);
+  record.reconcileRequested?.();
+  if (record.requestStarted) requestExecutionCancel(openCodeJSON, record).then(() => saveExecutionEvidence(message.taskId, record)).catch(() => {});
 }
 async function listenOpenCodeEvents() {
   if (listening) return;
@@ -129,9 +134,40 @@ async function listenOpenCodeEvents() {
     const response = await openCode("/event", { headers: { accept: "text/event-stream" } }); if (!response.ok || !response.body) throw new Error(`event HTTP ${response.status}`);
     console.log("opencode connected"); send({ type: "worker.status", workerId, status: busy ? "BUSY" : "ONLINE", opencode: "CONNECTED" }); await publishRegistration();
     eventReader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); if (['message.part.updated', 'message.part.delta', 'message.updated'].includes(type)) { const sessionID = event.properties?.part?.sessionID || event.properties?.info?.sessionID || event.properties?.sessionID; const taskId = sessionToTask.get(sessionID); if (taskId && Date.now() - (progressSeen.get(`${taskId}:ts`) || 0) >= 1000) { progressSeen.set(`${taskId}:ts`, Date.now()); send({ type: 'opencode.progress', taskId, value: type }); } } if (type.includes("permission") && !publishingEnabled) { const requestId = event.properties?.id || event.properties?.permissionID; const openCodeSessionId = event.properties?.sessionID; if (requestId && openCodeSessionId) permissionSession.set(requestId, openCodeSessionId); send({ type: "permission.requested", requestId, request: event.properties }); } else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
+    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); const part = event.properties?.part; if (part?.type === 'tool' && ['edit', 'write', 'apply_patch'].includes(part.tool)) { const taskId = sessionToTask.get(part.sessionID); const record = activeTasks.get(taskId); if (record && !record.classReported) { record.classReported = true; send({ type: 'opencode.execution.class', taskId, executionClass: 'verified' }); } } if (['message.part.updated', 'message.part.delta', 'message.updated'].includes(type)) { const sessionID = event.properties?.part?.sessionID || event.properties?.info?.sessionID || event.properties?.sessionID; const taskId = sessionToTask.get(sessionID); if (taskId && Date.now() - (progressSeen.get(`${taskId}:ts`) || 0) >= 1000) { progressSeen.set(`${taskId}:ts`, Date.now()); send({ type: 'opencode.progress', taskId, value: type }); } } if (type.includes("permission") && !publishingEnabled) { const requestId = event.properties?.id || event.properties?.permissionID; const openCodeSessionId = event.properties?.sessionID; if (requestId && openCodeSessionId) permissionSession.set(requestId, openCodeSessionId); send({ type: "permission.requested", requestId, request: event.properties }); } else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
   } catch { send({ type: "worker.status", workerId, status: "ERROR", opencode: "DISCONNECTED" }); setTimeout(listenOpenCodeEvents, 3000); }
   finally { listening = false; }
+}
+function updateTaskPolicy(message) {
+  const record = activeTasks.get(message.taskId), entry = journal.entries[message.taskId];
+  if (!record || !entry || entry.attemptId !== message.attemptId || entry.dispatchId !== message.dispatchId || !Number.isFinite(message.policy?.executionDeadlineMs) || message.policy.executionDeadlineMs <= 0) return;
+  clearTimeout(record.safety);
+  record.safety = setTimeout(() => cancelTask({ taskId: message.taskId, source: 'timeout' }), Math.max(0, entry.startedAt + message.policy.executionDeadlineMs + timeoutConfig().graceMs + 30000 - Date.now()));
+}
+function saveExecutionEvidence(taskId, record) {
+  Object.assign(journal.entries[taskId], {
+    openCodeSessionId: record.openCodeSessionId, userMessageId: record.userMessageId,
+    workspaceId: record.workspaceId, cancelSource: record.source,
+    abortAcknowledged: Boolean(record.abortAcknowledged),
+  });
+  journal.flush();
+}
+function executionWaitOptions(taskId, record) {
+  return {
+    onEvidence: () => saveExecutionEvidence(taskId, record),
+    onUnverified: () => send({ type: 'task.interrupted', taskId, reason: 'EXECUTION_UNVERIFIED' }),
+  };
+}
+async function deliverAgentResult(task, workspace, response) {
+  const text = (response.parts || []).filter(part => part.type === 'text' && part.text).map(part => part.text).join('\n');
+  await detectArtifacts(text, task.taskId, workspace);
+  send({ type: 'agent.message.completed', taskId: task.taskId, sessionId: task.sessionId, text, actualModel: { providerID: response.info?.providerID, modelID: response.info?.modelID, cost: response.info?.cost, tokens: response.info?.tokens } });
+  send({ type: 'task.completed', taskId: task.taskId, sessionId: task.sessionId });
+}
+async function settleExecutionEvidence(task, workspace, evidence, source) {
+  if (evidence.state === 'COMPLETED') return deliverAgentResult(task, workspace, evidence.response);
+  if (evidence.state === 'CANCELLED') send({ type: 'task.cancelled', taskId: task.taskId, sessionId: task.sessionId, source: source || 'user', executionStopped: true });
+  else send({ type: 'task.failed', taskId: task.taskId, sessionId: task.sessionId, reason: 'OPENCODE_ERROR', error: evidence.error });
 }
 async function handleTask(task) {
   if (activeTasks.has(task.taskId)) return;
@@ -144,9 +180,10 @@ async function handleTask(task) {
     return;
   }
   const controller = new AbortController();
-  const record = { controller, openCodeSessionId: null, source: null };
+  const record = { controller, openCodeSessionId: null, source: null, workspaceId: workspace.id, directory: workspace.root, userMessageId: `msg_${Date.now().toString(16).padStart(12, '0')}${randomUUID().replaceAll('-', '').slice(0, 14)}`, requestStarted: false };
+  const reconciliation = new Promise(resolve => { record.reconcileRequested = resolve; });
   activeTasks.set(task.taskId, record);
-  const safety = setTimeout(() => { record.source = record.source || "timeout"; controller.abort(); }, (task.policy?.executionDeadlineMs || safetyAbortMs) + timeoutConfig().graceMs + 30000);
+  record.safety = setTimeout(() => cancelTask({ taskId: task.taskId, source: "timeout" }), (task.policy?.executionDeadlineMs || safetyAbortMs) + timeoutConfig().graceMs + 30000);
   busy += 1;
   send({ type: "task.accepted", taskId: task.taskId, sessionId: task.sessionId }); console.log(`task accepted: ${task.taskId}`);
   send({ type: "task.running", taskId: task.taskId, sessionId: task.sessionId });
@@ -172,28 +209,40 @@ async function handleTask(task) {
     record.openCodeSessionId = openCodeSessionId;
     sessionWorkspace.set(openCodeSessionId, workspace.root);
     sessionToTask.set(openCodeSessionId, task.taskId);
+    if (record.source) {
+      send({ type: 'task.cancelled', taskId: task.taskId, sessionId: task.sessionId, source: record.source, executionStopped: true });
+      return;
+    }
+    record.requestStarted = true;
+    saveExecutionEvidence(task.taskId, record);
     send({ type: "opencode.request.sent", taskId: task.taskId, sessionId: task.sessionId, openCodeSessionId });
     console.log(`opencode request started: ${task.taskId} workspace=${workspace.id}`);
-    const response = await openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", directory: workspace.root, body: JSON.stringify({ model: task.model, ...((publishingEnabled || (publication && workspace.id === "publish")) ? { tools: { "*": false } } : { tools: { question: false } }), parts: [{ type: "text", text: publishingEnabled ? `${task.prompt}\n\n本地能力：mashang-publish 位于 ${publishing.root}。文字发布由 Worker 确认入口执行。支持用户输入“把这段文字发布到微博：正文”，可用 [private,ai] 指定可见性与声明。只提供说明，不模拟确认，不声称已发布。此会话全部工具已禁用。` : publication && workspace.id === "publish" ? `你正在 Publish 工作空间起草或审阅文字。直接给出可审阅的短文案；信息不足时采用合理默认并说明，不调用工具或等待交互式提问。不执行发布。\n\n${task.prompt}` : task.prompt }] }), signal: controller.signal });
-    sessionToTask.delete(openCodeSessionId);
+    const result = await Promise.race([openCodeJSON(`/session/${encodeURIComponent(openCodeSessionId)}/message`, { method: "POST", directory: workspace.root, body: JSON.stringify({ messageID: record.userMessageId, model: task.model, ...((publishingEnabled || (publication && workspace.id === "publish")) ? { tools: { "*": false } } : { tools: { question: false } }), parts: [{ type: "text", text: publishingEnabled ? `${task.prompt}\n\n本地能力：mashang-publish 位于 ${publishing.root}。文字发布由 Worker 确认入口执行。支持用户输入“把这段文字发布到微博：正文”，可用 [private,ai] 指定可见性与声明。只提供说明，不模拟确认，不声称已发布。此会话全部工具已禁用。` : publication && workspace.id === "publish" ? `你正在 Publish 工作空间起草或审阅文字。直接给出可审阅的短文案；信息不足时采用合理默认并说明，不调用工具或等待交互式提问。不执行发布。\n\n${task.prompt}` : task.prompt }] }), signal: controller.signal }).then(response => ({ response })), reconciliation.then(async () => ({ evidence: await waitForExecution(openCodeJSON, record, executionWaitOptions(task.taskId, record)) }))]);
+    if (result.evidence) {
+      await settleExecutionEvidence(task, workspace, result.evidence, record.source);
+      return;
+    }
+    const response = result.response;
     send({ type: "opencode.response.received", taskId: task.taskId, sessionId: task.sessionId, openCodeSessionId });
-    const text = (response.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n");
-    await detectArtifacts(text, task.taskId, workspace);
-    send({ type: "agent.message.completed", taskId: task.taskId, sessionId: task.sessionId, text, actualModel: { providerID: response.info?.providerID, modelID: response.info?.modelID, cost: response.info?.cost, tokens: response.info?.tokens } });
-    send({ type: "task.completed", taskId: task.taskId, sessionId: task.sessionId }); console.log(`task completed: ${task.taskId}`);
+    if (response.info?.error || (response.info?.finish && response.info.finish !== 'stop')) {
+      const evidence = await waitForExecution(openCodeJSON, record, executionWaitOptions(task.taskId, record));
+      await settleExecutionEvidence(task, workspace, evidence, record.source);
+    } else await deliverAgentResult(task, workspace, response);
   } catch (error) {
-    sessionToTask.delete(record.openCodeSessionId);
-    if (controller.signal.aborted) {
-      const source = record.source || "timeout";
-      send({ type: "opencode.request.aborted", taskId: task.taskId, sessionId: task.sessionId, source });
-      send({ type: "task.cancelled", taskId: task.taskId, sessionId: task.sessionId, source });
-      console.log(`task cancelled: ${task.taskId} source=${source}`);
+    if (record.requestStarted) {
+      send({ type: 'opencode.request.aborted', taskId: task.taskId, sessionId: task.sessionId, source: record.source || 'transport' });
+      const evidence = await waitForExecution(openCodeJSON, record, executionWaitOptions(task.taskId, record));
+      await settleExecutionEvidence(task, workspace, evidence, record.source);
+    } else if (record.source) {
+      send({ type: 'task.cancelled', taskId: task.taskId, sessionId: task.sessionId, source: record.source, executionStopped: true });
     } else {
-      send({ type: "task.failed", taskId: task.taskId, sessionId: task.sessionId, error: record.externalEffectPossible ? "外部操作结果不确定（UNCERTAIN），请人工核对；不会自动重试。" : error.message });
-      console.log(`task failed: ${task.taskId}`);
+      send({ type: 'task.failed', taskId: task.taskId, sessionId: task.sessionId, error: record.externalEffectPossible ? '外部操作结果不确定（UNCERTAIN），请人工核对；不会自动重试。' : error.message });
     }
   } finally {
-    clearTimeout(safety);
+    clearTimeout(record.safety);
+    record.settled = true;
+    controller.abort(); // Transport cleanup only after execution settlement.
+    sessionToTask.delete(record.openCodeSessionId);
     activeTasks.delete(task.taskId);
     progressSeen.delete(task.taskId);
     busy = Math.max(0, busy - 1);
@@ -263,14 +312,28 @@ async function sendReconciliation(requests) {
     const result = await publication.request(entry.operation, true);
     if (result.status !== 'UNKNOWN') journal.record({ type: 'runtime.control.result', controlId: request.taskId, ...result });
   }
-  const records = journal.reconcile(requests, (id, executor) => executor === 'agent' ? Boolean(activeTasks.get(id) && !activeTasks.get(id).controller.signal.aborted) : Boolean(activeControls.get(id) && !activeControls.get(id).signal.aborted));
+  const records = journal.reconcile(requests, (id, executor) => executor === 'agent' ? Boolean(activeTasks.has(id)) : Boolean(activeControls.get(id) && !activeControls.get(id).signal.aborted));
   send({ type: 'worker.reconcile', workerId, records });
+}
+async function recoverExecutions() {
+  for (const entry of Object.values(journal.entries)) {
+    if (entry.status === 'RESULT' || entry.executor !== 'agent' || !entry.openCodeSessionId || !entry.userMessageId || activeTasks.has(entry.taskId)) continue;
+    const workspace = resolveWorkspace(workspaces, entry.workspaceId);
+    if (!workspace) continue;
+    const record = { ...entry, source: entry.cancelSource, directory: workspace.root, controller: new AbortController(), requestStarted: true };
+    activeTasks.set(entry.taskId, record); sessionToTask.set(entry.openCodeSessionId, entry.taskId); sessionWorkspace.set(entry.openCodeSessionId, workspace.root); busy++;
+    const task = { taskId: entry.taskId, sessionId: entry.sessionId };
+    waitForExecution(openCodeJSON, record, executionWaitOptions(entry.taskId, record))
+      .then(evidence => settleExecutionEvidence(task, workspace, evidence, record.source))
+      .catch(() => send({ type: 'task.interrupted', taskId: entry.taskId, reason: 'EXECUTION_UNVERIFIED' }))
+      .finally(() => { clearTimeout(record.safety); record.settled = true; activeTasks.delete(entry.taskId); sessionToTask.delete(entry.openCodeSessionId); busy = Math.max(0, busy - 1); });
+  }
 }
 async function register() { runtimeSequence = 0; await publishRegistration(); listenOpenCodeEvents(); publishRuntimeSnapshot(); }
 function connect() {
   const url = new URL(hubURL); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = "/worker";
   socket = new WebSocket(url, { headers: { Authorization: `Bearer ${workerSecret}` } });
-  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "operation.preview.request" && publication) readOperationPreview(message); else if (message.type === "worker.reconcile.request") sendReconciliation(message.tasks || []); else if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") handlePermissionReply(message); } catch { /* Keep worker alive on malformed control messages. */ } });
+  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "operation.preview.request" && publication) readOperationPreview(message); else if (message.type === "worker.reconcile.request") sendReconciliation(message.tasks || []); else if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "task.policy.updated") updateTaskPolicy(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") handlePermissionReply(message); } catch { /* Keep worker alive on malformed control messages. */ } });
   socket.on("close", () => setTimeout(connect, 2000)); socket.on("error", () => socket.close());
 }
-await loadMappings(); setInterval(heartbeat, heartbeatMs); setInterval(publishRuntimeSnapshot, runtimeSnapshotMs); connect();
+await loadMappings(); await recoverExecutions(); setInterval(heartbeat, heartbeatMs); setInterval(publishRuntimeSnapshot, runtimeSnapshotMs); connect();

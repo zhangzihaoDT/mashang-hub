@@ -216,7 +216,12 @@ TASK_CANCEL_GRACE_MS=10000    # grace before hard timeout
 
 - Soft timeout: broadcasts `task.timeout.warning`, shows "运行超时，正在尝试取消", and sends `task.cancel` to the Worker.
 - If cancellation is not acknowledged during the grace period, retain `INTERRUPTED` / `UNCERTAIN` and wait for execution evidence; do not claim the process stopped.
-- Worker aborts the in-flight OpenCode request through an `AbortController`.
+- Worker requests `POST /session/:id/abort` and checks session status plus messages belonging to the current user message. Disconnecting HTTP alone never proves execution stopped.
+- A confirmed stop settles `CANCELLED` (user) or `TIMEOUT` (deadline). A racing completed result wins. An unverified stop remains `INTERRUPTED` / `UNCERTAIN`; Worker retains the session mapping and recovers the result without replaying the prompt, including after Worker restart.
+- Older Workers' cancellation events without `executionStopped: true` are treated as unverified. Upgrade Worker and Hub together.
+- While a conversation/workspace has an unresolved execution, another prompt returns HTTP 409 to prevent overlapping execution and cancellation of the wrong turn.
+
+Execution budgets are generic, not business-script routing: default `query` tasks receive 15 minutes; callers can send `policy: { executionClass: "verified" }` for tasks that include edits and validation (30 minutes). `TASK_VERIFIED_EXECUTION_DEADLINE_MS` configures that default. Explicit `policy.executionDeadlineMs` takes precedence and `TASK_MAX_EXECUTION_MS` caps both classes. When no explicit class or deadline is supplied, Worker reports observed file-edit tool activity and Hub promotes that task to the verified budget, updating both watchdogs. Explicit caller budgets are never promoted. The legacy `TASK_TIMEOUT_MS` override still applies to query tasks if set; inspect deployment configuration before relying on the default. Progress silence remains notification-only.
 
 Cancel is a request, not an immediate verdict. The first valid terminal state wins: if the Worker returns normally before the cancel takes effect, the turn settles `COMPLETED`; otherwise it settles `task.cancelled` / `USER_CANCELLED`.
 

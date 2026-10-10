@@ -20,6 +20,9 @@ try{
  send({type:'worker.heartbeat',workerId:'worker1'});await sleep(120);
  assert.equal((await api(`/api/tasks/${task.taskId}`)).lastProgressAt,progress,'heartbeat cannot refresh task progress');
  send({type:'task.failed',...identity,attemptId:'stale'});await sleep(50);assert.equal((await api(`/api/tasks/${task.taskId}`)).status,'RUNNING');
+ send({type:'task.cancelled',...identity,source:'timeout'});
+ await until(async()=>(await api(`/api/tasks/${task.taskId}`)).status==='INTERRUPTED');
+ assert.equal((await api(`/api/tasks/${task.taskId}`)).reason,'CANCEL_UNVERIFIED','old cancellation without stop proof cannot settle the task');
  ws.close();await until(async()=>(await api(`/api/tasks/${task.taskId}`)).status==='INTERRUPTED');
  await api(`/api/tasks/${task.taskId}/cancel`,{});assert.equal((await api(`/api/tasks/${task.taskId}`)).cancelRequested,true);
  await connect();await until(()=>reportRequest);

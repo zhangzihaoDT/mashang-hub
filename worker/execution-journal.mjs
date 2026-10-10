@@ -20,7 +20,7 @@ export class ExecutionJournal {
   begin(message) {
     const id = message.taskId || message.controlId;
     if (this.entries[id]) return false;
-    this.entries[id] = { taskId: id, attemptId: message.attemptId || null, dispatchId: message.dispatchId || null, status: 'RUNNING', startedAt: Date.now(), lastProgressAt: Date.now(), executor: message.controlId ? 'operation' : 'agent', events: [] };
+    this.entries[id] = { taskId: id, attemptId: message.attemptId || null, dispatchId: message.dispatchId || null, status: 'RUNNING', startedAt: Date.now(), lastProgressAt: Date.now(), sessionId: message.sessionId || null, executor: message.controlId ? 'operation' : 'agent', events: [] };
     this.flush(); return true;
   }
   record(message) {

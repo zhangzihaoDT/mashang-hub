@@ -38,11 +38,12 @@
     "test:publishing": "node tests/publishing.mjs && node tests/publishing-bridge.mjs",
     "test:task-store": "node tests/task-store.mjs && node tests/task-store-bridge.mjs",
     "task:backup": "node scripts/task-backup.mjs",
-    "test:recovery": "node tests/task-policy.mjs && node tests/execution-journal.mjs && node tests/long-task-bridge.mjs && node tests/reconciliation-bridge.mjs",
+    "test:recovery": "node tests/task-policy.mjs && node tests/execution-journal.mjs && node tests/long-task-bridge.mjs && node tests/reconciliation-bridge.mjs && npm run test:opencode-cancellation",
     "test:long-task": "LONG_TASK_MS=185000 node tests/long-task-bridge.mjs",
     "image:build": "node scripts/build-image.mjs",
     "test:workbench-browser": "node tests/workbench-browser.mjs",
-    "test:publication-operation": "node tests/publication-operation.mjs && node tests/publication-operation-bridge.mjs && node tests/publication-direct.mjs"
+    "test:publication-operation": "node tests/publication-operation.mjs && node tests/publication-operation-bridge.mjs && node tests/publication-direct.mjs",
+    "test:opencode-cancellation": "node tests/opencode-execution.mjs && node tests/opencode-cancellation-bridge.mjs"
   },
   "engines": {
     "node": ">=22.13"

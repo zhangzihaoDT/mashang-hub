@@ -200,7 +200,7 @@ function onWorkerMessage(message) {
   if (associated && ((message.attemptId && message.attemptId !== associated.attemptId) || (message.dispatchId && message.dispatchId !== associated.dispatchId))) return;
   if (associated?.status === 'INTERRUPTED' && message.attemptId === associated.attemptId && message.dispatchId === associated.dispatchId && ['agent.message.completed', 'task.completed', 'task.failed', 'task.cancelled', 'runtime.control.result'].includes(message.type)) {
     const local = associated.source === 'conversation' ? tasks.get(associated.taskId) : controls.get(associated.taskId);
-    if (local) { local.status = 'RUNNING'; if (associated.source === 'conversation') persistTask(local); else persistControl(local); }
+    if (local) { local.status = 'RUNNING'; if (associated.source === 'conversation') { persistTask(local); broadcast({ type: 'task.resumed', taskId: local.taskId, sessionId: local.sessionId }); } else persistControl(local); }
   }
   if (message.type === "worker.register") return workerModelsMessage(message);
   if (message.type === "worker.heartbeat") {
@@ -258,6 +258,17 @@ function onWorkerMessage(message) {
     const task = tasks.get(message.taskId);
     if (task && !isTerminal(task.status)) appendEvent(task.taskId, { event: message.type });
     broadcast(message);
+    return;
+  }
+  if (message.type === 'opencode.execution.class') {
+    const task = tasks.get(message.taskId);
+    if (task && !isTerminal(task.status) && !task.cancelRequested && task.policy.allowClassPromotion && task.policy.executionClass !== 'verified' && message.executionClass === 'verified') {
+      const verified = executionPolicy({ executionClass: 'verified' });
+      task.policy = { ...task.policy, executionClass: 'verified', executionDeadlineMs: Math.max(task.policy.executionDeadlineMs, verified.executionDeadlineMs) };
+      persistTask(task); scheduleWatchdog(task);
+      sendWorker({ type: 'task.policy.updated', taskId: task.taskId, attemptId: task.attemptId, dispatchId: task.dispatchId, policy: task.policy });
+      appendEvent(task.taskId, { event: 'task.policy.updated', executionClass: 'verified', executionDeadlineMs: task.policy.executionDeadlineMs });
+    }
     return;
   }
   if (message.type === "opencode.progress") {
@@ -326,6 +337,12 @@ function onWorkerMessage(message) {
   if (message.type === "task.cancelled") {
     const task = tasks.get(message.taskId);
     if (!task) { broadcast(message); return; }
+    if (message.executionStopped !== true) {
+      task.status = task.externalEffectPossible ? 'UNCERTAIN' : 'INTERRUPTED';
+      task.reason = 'CANCEL_UNVERIFIED'; clearTaskTimers(task); persistTask(task);
+      broadcast({ type: 'task.interrupted', taskId: task.taskId, error: '取消尚未确认，等待执行对账。' });
+      return;
+    }
     if (message.source === "user") finalizeTask(task, { event: "task.cancelled", status: "CANCELLED", reason: REASONS.USER_CANCELLED });
     else finalizeTask(task, { event: "task.timeout", status: "TIMEOUT", reason: REASONS.WORKER_REQUEST_TIMEOUT });
     return;
@@ -340,7 +357,12 @@ function onWorkerMessage(message) {
   }
   if (message.type === "task.interrupted") {
     const task = tasks.get(message.taskId);
-    if (task) finalizeTask(task, { event: "task.interrupted", status: "INTERRUPTED", reason: REASONS.WORKER_DISCONNECTED });
+    if (task && !['COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT'].includes(task.status)) {
+      task.status = task.externalEffectPossible ? 'UNCERTAIN' : 'INTERRUPTED';
+      task.reason = message.reason === 'EXECUTION_UNVERIFIED' ? message.reason : REASONS.WORKER_DISCONNECTED;
+      clearTaskTimers(task); persistTask(task);
+      broadcast({ ...message, error: '执行状态待确认，正在核对 OpenCode 结果。' });
+    }
     else broadcast(message);
     return;
   }
@@ -516,6 +538,8 @@ const server = createServer(async (req, res) => {
     const rawWorkspace = input.workspaceId;
     const workspaceId = rawWorkspace == null || rawWorkspace === "" ? null : sanitizeWorkspaceId(rawWorkspace);
     if (rawWorkspace != null && rawWorkspace !== "" && workspaceId === null) return json(res, 400, { error: "Invalid workspaceId" });
+    const unresolved = [...tasks.values()].find(task => task.sessionId === session.id && (task.workspaceId || null) === workspaceId && !['COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT'].includes(task.status));
+    if (unresolved) return json(res, 409, { error: 'Previous execution is still running or awaiting reconciliation', taskId: unresolved.taskId, awaitingReconciliation: true });
     for (const control of controls.values()) if (control.snapshotRef && control.conversationId === session.id && control.status === 'PENDING_APPROVAL') finalizeControl(control, 'CANCELLED', 'DRAFT_EDITED');
     session.turnCount = (session.turnCount || 0) + 1;
     const turnId = `turn_${String(session.turnCount).padStart(3, "0")}`;
