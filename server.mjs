@@ -1,3 +1,4 @@
+import { executionPolicy, executionTimes } from "./server/task-policy.mjs";
 import { TaskStore } from "./server/task-store.mjs";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -74,7 +75,10 @@ function clearTaskTimers(task) { clearTimeout(task.timers.soft); clearTimeout(ta
 
 function finalizeTask(task, { event, status, reason, error }) {
   if (isTerminal(task.status)) return false;
-  if (task.externalEffectPossible && ["FAILED", "TIMEOUT", "CANCELLED", "INTERRUPTED"].includes(status)) error = "外部操作结果可能不确定，请人工核对；不要自动重试。";
+  if (task.externalEffectPossible && ['FAILED', 'TIMEOUT', 'CANCELLED', 'INTERRUPTED'].includes(status)) {
+    task.status = 'UNCERTAIN'; task.reason = reason || 'EXTERNAL_RESULT_UNVERIFIED'; clearTaskTimers(task); persistTask(task);
+    broadcast({ type: 'task.interrupted', taskId: task.taskId, error: '外部操作结果可能不确定，请人工核对；不要自动重试。' }); return true;
+  }
   task.status = status;
   task.updatedAt = Date.now();
   clearTaskTimers(task);
@@ -95,6 +99,7 @@ function broadcastControl(control) { broadcast({ type: "runtime.control.updated"
 function clearControlTimers(control) { clearTimeout(control.timers.soft); clearTimeout(control.timers.hard); clearTimeout(control.timers.cancel); control.timers.soft = control.timers.hard = control.timers.cancel = null; }
 function finalizeControl(control, status, reason, code = null) {
   if (isTerminalControl(control.status)) return false;
+  if (control.status === 'UNCERTAIN' && status === 'CANCELLED') { control.reason = 'CANCEL_UNVERIFIED'; persistControl(control); broadcastControl(control); return false; }
   control.status = status;
   control.reason = reason || null;
   control.code = code;
@@ -107,20 +112,24 @@ function finalizeControl(control, status, reason, code = null) {
 }
 function scheduleControlWatchdog(control) {
   const config = controlTimeoutConfig(process.env, control.timeoutMs);
-  control.timers.soft = setTimeout(() => onControlSoftTimeout(control), config.requestMs);
+  clearTimeout(control.timers.soft);
+  control.timers.soft = setTimeout(() => onControlSoftTimeout(control), Math.max(0, (control.startedAt || control.createdAt) + config.requestMs - Date.now()));
 }
 function onControlSoftTimeout(control) {
-  if (isTerminalControl(control.status)) return;
+  if (isTerminalControl(control.status) || ["INTERRUPTED", "UNCERTAIN"].includes(control.status)) return;
+  control.cancelRequested = true; control.cancelSource = "timeout"; persistControl(control);
   console.log(`control timeout warning: ${control.controlId}`);
   sendWorker({ type: "runtime.control.cancel", controlId: control.controlId, source: "timeout" });
-  control.timers.hard = setTimeout(() => { if (!isTerminalControl(control.status)) finalizeControl(control, "TIMEOUT", "CONTROL_TIMEOUT"); }, control.graceTimeoutMs ?? controlTimeoutConfig().graceMs);
+  control.timers.hard = setTimeout(() => { if (!isTerminalControl(control.status)) { control.status = "INTERRUPTED"; control.reason = "CANCEL_UNVERIFIED"; clearControlTimers(control); persistControl(control); broadcastControl(control); } }, control.graceTimeoutMs ?? controlTimeoutConfig().graceMs);
 }
 
 function scheduleWatchdog(task) {
-  const config = timeoutConfig();
-  task.softDeadline = task.createdAt + config.requestMs;
-  task.hardDeadline = task.createdAt + config.requestMs + config.graceMs;
-  task.timers.soft = setTimeout(() => onSoftTimeout(task), config.requestMs);
+  if (!task.startedAt || ['INTERRUPTED', 'UNCERTAIN'].includes(task.status)) return;
+  clearTimeout(task.timers.soft);
+  const config = { ...timeoutConfig(), requestMs: task.policy.executionDeadlineMs };
+  task.softDeadline = task.startedAt + config.requestMs;
+  task.hardDeadline = task.startedAt + config.requestMs + config.graceMs;
+  task.timers.soft = setTimeout(() => onSoftTimeout(task), Math.max(0, task.softDeadline - Date.now()));
 }
 
 function onSoftTimeout(task) {
@@ -129,13 +138,15 @@ function onSoftTimeout(task) {
   appendEvent(task.taskId, { event: "task.timeout.warning", reason: REASONS.WORKER_REQUEST_TIMEOUT, elapsedMs });
   broadcast({ type: "task.timeout.warning", taskId: task.taskId, sessionId: task.sessionId, conversationId: task.conversationId, turnId: task.turnId, reason: REASONS.WORKER_REQUEST_TIMEOUT, elapsedMs });
   console.log(`task timeout warning: ${task.taskId} elapsed=${elapsedMs}`);
+  task.cancelRequested = true; task.cancelSource = "timeout"; persistTask(task);
   sendWorker({ type: "task.cancel", taskId: task.taskId, source: "timeout" });
   task.timers.hard = setTimeout(() => onHardTimeout(task), Math.max(0, task.hardDeadline - Date.now()));
 }
 
 function onHardTimeout(task) {
   if (isTerminal(task.status)) return;
-  finalizeTask(task, { event: "task.timeout", status: "TIMEOUT", reason: REASONS.WORKER_REQUEST_TIMEOUT });
+  task.status = task.externalEffectPossible ? 'UNCERTAIN' : 'INTERRUPTED'; task.reason = 'CANCEL_UNVERIFIED'; clearTaskTimers(task); persistTask(task);
+  broadcast({ type: 'task.interrupted', taskId: task.taskId, error: '执行期限已到，但尚未确认停止，等待执行对账。' });
 }
 
 function workerModelsMessage(message) {
@@ -145,13 +156,49 @@ function workerModelsMessage(message) {
   activeWorker.workerId = message.workerId;
   activeWorker.models = message.models || [];
   activeWorker.workspaces = sanitizeWorkspaces(message.workspaces);
+  activeWorker.taskProtocolVersion = message.taskProtocolVersion || 0;
   runtimeSnapshotSequence = 0;
   console.log(`worker connected: ${message.workerId}`);
   workerStatus(worker.status, { workerId: message.workerId, models: activeWorker.models });
   sendWorker({ type: "worker.registered", workerId: message.workerId });
+  const pending = taskStore.list().filter(record => record.workerId === message.workerId && ['DISPATCHED', 'RUNNING', 'INTERRUPTED', 'UNCERTAIN'].includes(record.status));
+  if (pending.length) sendWorker({ type: 'worker.reconcile.request', tasks: pending.map(({ taskId, attemptId, dispatchId }) => ({ taskId, attemptId, dispatchId })) });
 }
 
 function onWorkerMessage(message) {
+  if (message.type === 'worker.reconcile') {
+    if (message.workerId !== activeWorker?.workerId || !Array.isArray(message.records)) return;
+    for (const evidence of message.records) {
+      const record = taskStore.get(evidence.taskId);
+      if (!record || record.workerId !== message.workerId || record.attemptId !== evidence.attemptId || record.dispatchId !== evidence.dispatchId || !['DISPATCHED', 'RUNNING', 'INTERRUPTED', 'UNCERTAIN'].includes(record.status)) continue;
+      const local = record.source === 'conversation' ? tasks.get(record.taskId) : controls.get(record.taskId);
+      if (!local) continue;
+      if (evidence.state === 'RUNNING' && record.status !== 'UNCERTAIN') {
+        local.status = 'RUNNING'; local.startedAt ||= record.startedAt || Date.now(); local.lastProgressAt ||= record.lastProgressAt || local.startedAt;
+        if (record.source === 'conversation') { persistTask(local); scheduleWatchdog(local); broadcast({ type: 'task.resumed', taskId: record.taskId }); }
+        else { persistControl(local); scheduleControlWatchdog(local); broadcastControl(local); }
+        if (local.cancelRequested) sendWorker(record.source === 'conversation' ? { type: 'task.cancel', taskId: record.taskId, source: local.cancelSource || 'user' } : { type: 'runtime.control.cancel', controlId: record.taskId, source: local.cancelSource || 'user' });
+      } else if (evidence.state === 'RESULT' && Array.isArray(evidence.events)) {
+        // Replaying a durable result is not redispatching an execution.
+        local.status = record.status === 'UNCERTAIN' ? 'UNCERTAIN' : 'RUNNING';
+        for (const event of evidence.events) if ((event.taskId || event.controlId) === record.taskId && event.attemptId === record.attemptId && event.dispatchId === record.dispatchId && ['artifact.created', 'agent.message.completed', 'task.completed', 'task.failed', 'task.cancelled', 'runtime.control.result'].includes(event.type)) onWorkerMessage(event);
+      } else {
+        local.status = evidence.state === 'UNCERTAIN' || record.status === 'UNCERTAIN' ? 'UNCERTAIN' : 'INTERRUPTED';
+        local.reason = 'EXECUTION_UNVERIFIED';
+        if (record.source === 'conversation') { clearTaskTimers(local); persistTask(local); }
+        else { clearControlTimers(local); persistControl(local); }
+      }
+    }
+    return;
+  }
+  const associated = message.taskId ? taskStore.get(message.taskId) : message.controlId ? taskStore.get(message.controlId) : null;
+  if (associated && associated.workerId !== activeWorker?.workerId) return;
+  if (associated && activeWorker?.taskProtocolVersion === 1 && (message.attemptId !== associated.attemptId || message.dispatchId !== associated.dispatchId)) return;
+  if (associated && ((message.attemptId && message.attemptId !== associated.attemptId) || (message.dispatchId && message.dispatchId !== associated.dispatchId))) return;
+  if (associated?.status === 'INTERRUPTED' && message.attemptId === associated.attemptId && message.dispatchId === associated.dispatchId && ['agent.message.completed', 'task.completed', 'task.failed', 'task.cancelled', 'runtime.control.result'].includes(message.type)) {
+    const local = associated.source === 'conversation' ? tasks.get(associated.taskId) : controls.get(associated.taskId);
+    if (local) { local.status = 'RUNNING'; if (associated.source === 'conversation') persistTask(local); else persistControl(local); }
+  }
   if (message.type === "worker.register") return workerModelsMessage(message);
   if (message.type === "worker.heartbeat") {
     const worker = workers.get(message.workerId);
@@ -209,7 +256,10 @@ function onWorkerMessage(message) {
   }
   if (message.type === "opencode.progress") {
     const task = tasks.get(message.taskId);
-    if (task && !isTerminal(task.status) && task.lastProgress !== message.value) {
+    if (task && !isTerminal(task.status)) {
+      task.lastProgressAt = Date.now();
+      task.stallNotified = false;
+      persistTask(task);
       task.lastProgress = message.value;
       appendEvent(task.taskId, { event: "opencode.progress", value: message.value });
     }
@@ -231,7 +281,9 @@ function onWorkerMessage(message) {
       if (message.externalEffectPossible === true) task.externalEffectPossible = true;
       task.status = message.type === "task.accepted" ? "SUBMITTING" : "RUNNING";
       task.updatedAt = Date.now();
-      if (task.status === "RUNNING") task.startedAt ||= Date.now();
+      task.startedAt ||= Date.now();
+      task.lastProgressAt ||= task.startedAt;
+      scheduleWatchdog(task);
       persistTask(task);
       updateTurn(task.taskId, { status: task.status });
     }
@@ -363,6 +415,7 @@ const server = createServer(async (req, res) => {
     if (control.status !== "AWAITING_PERMISSION") return json(res, 409, { error: "Control already decided", status: control.status });
     const approved = Boolean((await body(req)).approve);
     if (!approved) { taskStore.reject(control.controlId, "CANCELLED", "USER_REJECTED"); finalizeControl(control, "REJECTED", "USER_REJECTED"); return json(res, 200, publicControl(control)); }
+    if (!activeWorker || activeWorker.readyState !== 1) return json(res, 503, { error: "Worker offline; approval remains pending" });
     const dispatch = taskStore.dispatch(control.controlId, { legacyStatus: "RUNNING", startedAt: Date.now(), workerId: activeWorker?.workerId || control.workerId });
     Object.assign(control, dispatch);
     control.status = "RUNNING";
@@ -384,7 +437,8 @@ const server = createServer(async (req, res) => {
     console.log(`control cancel requested: ${control.controlId}`);
     sendWorker({ type: "runtime.control.cancel", controlId: control.controlId, source: "user" });
     clearTimeout(control.timers.hard);
-    control.timers.cancel = setTimeout(() => { if (!isTerminalControl(control.status)) finalizeControl(control, "CANCELLED", "USER_CANCELLED"); }, controlTimeoutConfig().graceMs);
+    control.cancelRequested = true; control.cancelSource = "user"; persistControl(control);
+    control.timers.cancel = setTimeout(() => { if (!isTerminalControl(control.status)) { control.status = "INTERRUPTED"; control.reason = "CANCEL_UNVERIFIED"; clearControlTimers(control); persistControl(control); broadcastControl(control); } }, controlTimeoutConfig().graceMs);
     return json(res, 202, publicControl(control));
   }
   const controlGet = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)$/);
@@ -411,7 +465,7 @@ const server = createServer(async (req, res) => {
     session.turnCount = (session.turnCount || 0) + 1;
     const turnId = `turn_${String(session.turnCount).padStart(3, "0")}`;
     const task = { taskId: `task_${randomUUID()}`, sessionId: session.id, conversationId: session.id, turnId, model: modelString(input.model), workspaceId, status: "SUBMITTING", hasText: false, artifactCount: 0, lastProgress: null, pendingCompletion: false, attemptCompletion: null, timers: {}, createdAt: Date.now() };
-    Object.assign(task, { source: 'conversation', executor: 'agent', workerId: activeWorker.workerId, attempt: 0, policy: { requiresApproval: false, retry: 'manual', executionDeadlineMs: timeoutConfig().requestMs } });
+    Object.assign(task, { source: 'conversation', executor: 'agent', workerId: activeWorker.workerId, attempt: 0, policy: executionPolicy(input.policy || {}) });
     taskStore.save({ ...task, status: 'CREATED', legacyStatus: 'SUBMITTING', updatedAt: Date.now() });
     Object.assign(task, taskStore.dispatch(task.taskId, { legacyStatus: 'SUBMITTING' }));
     task.status = 'SUBMITTING';
@@ -419,9 +473,8 @@ const server = createServer(async (req, res) => {
     session.workerId = activeWorker.workerId;
     taskStore.saveSession(session);
     createTurn({ conversationId: session.id, turnId, taskId: task.taskId, model: task.model, workspaceId });
-    scheduleWatchdog(task);
     console.log(`task created: ${task.taskId} conversation=${session.id} turn=${turnId} workspace=${workspaceId || "default"}`);
-    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, attemptId: task.attemptId, dispatchId: task.dispatchId, sessionId: session.id, turnId, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
+    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, attemptId: task.attemptId, dispatchId: task.dispatchId, policy: task.policy, sessionId: session.id, turnId, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
     if (!dispatched) { console.log(`task dispatch failed: ${task.taskId} session=${session.id}`); finalizeTask(task, { event: "task.failed", status: "FAILED", reason: REASONS.OPENCODE_ERROR, error: "Mac Worker is offline" }); return json(res, 503, { error: "Mac Worker is offline", taskId: task.taskId }); }
     console.log(`task dispatched to worker: ${task.taskId} session=${session.id} worker=${activeWorker.workerId}`);
     return json(res, 202, publicTask(task));
@@ -433,13 +486,14 @@ const server = createServer(async (req, res) => {
   if (cancel && req.method === "POST") {
     const task = tasks.get(cancel[1]);
     if (!task) return json(res, 404, { error: "Task not found" });
-    if (isTerminal(task.status)) return json(res, 409, { error: "Task already settled", status: task.status });
+    if (["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"].includes(task.status)) return json(res, 409, { error: "Task already settled", status: task.status });
     console.log(`task cancel requested: ${task.taskId}`);
     appendEvent(task.taskId, { event: "task.cancel.requested", source: "user" });
     const dispatched = sendWorker({ type: "task.cancel", taskId: task.taskId, source: "user" });
-    if (!dispatched) { finalizeTask(task, { event: "task.cancelled", status: "CANCELLED", reason: REASONS.USER_CANCELLED, error: "Mac Worker is offline" }); return json(res, 202, { ok: true, taskId: task.taskId, immediate: true }); }
+    task.cancelRequested = true; task.cancelSource = 'user'; persistTask(task);
+    if (!dispatched) return json(res, 202, { ok: true, taskId: task.taskId, awaitingReconciliation: true });
     clearTimeout(task.timers.cancel);
-    task.timers.cancel = setTimeout(() => { if (!isTerminal(task.status)) finalizeTask(task, { event: "task.cancelled", status: "CANCELLED", reason: REASONS.USER_CANCELLED }); }, timeoutConfig().graceMs);
+    task.timers.cancel = setTimeout(() => { if (!isTerminal(task.status)) onHardTimeout(task); }, timeoutConfig().graceMs);
     return json(res, 202, { ok: true, taskId: task.taskId });
   }
   const artifact = url.pathname.match(/^\/api\/artifacts\/(content|download)$/);
@@ -458,16 +512,24 @@ server.on("upgrade", (req, socket, head) => {
 wss.on("connection", (ws) => {
   if (activeWorker) activeWorker.close(4001, "replaced");
   activeWorker = ws; workerStatus("CONNECTING");
-  ws.on("message", (data) => { try { onWorkerMessage(JSON.parse(data.toString())); } catch { /* Keep the control plane alive on malformed worker input. */ } });
+  ws.on("message", (data) => { if (activeWorker !== ws) return; try { onWorkerMessage(JSON.parse(data.toString())); } catch { /* Keep the control plane alive on malformed worker input. */ } });
   ws.on("close", () => {
     if (activeWorker !== ws) return;
     activeWorker = null;
-    for (const task of tasks.values()) if (!isTerminal(task.status)) finalizeTask(task, { event: "task.interrupted", status: "INTERRUPTED", reason: REASONS.WORKER_DISCONNECTED, error: "Mac Worker disconnected" });
-    for (const control of controls.values()) if (!isTerminalControl(control.status)) finalizeControl(control, "FAILED", "WORKER_DISCONNECTED");
+    for (const task of tasks.values()) if (!isTerminal(task.status)) {
+      clearTaskTimers(task); task.status = task.externalEffectPossible ? 'UNCERTAIN' : 'INTERRUPTED'; task.reason = REASONS.WORKER_DISCONNECTED; persistTask(task);
+      broadcast({ type: 'task.interrupted', taskId: task.taskId, error: 'Worker 断线，等待执行对账；不会自动重试。' });
+    }
+    for (const control of controls.values()) if (!isTerminalControl(control.status) && control.status !== 'AWAITING_PERMISSION') {
+      clearControlTimers(control); control.status = 'INTERRUPTED'; control.reason = 'WORKER_DISCONNECTED'; persistControl(control); broadcastControl(control);
+    }
     workerStatus("OFFLINE");
     broadcast({ type: "runtime.snapshot", workerOnline: false, receivedAt: runtimeReceivedAt, snapshot: runtimeSnapshot });
   });
   ws.on("error", () => ws.close());
 });
-setInterval(() => { for (const [id, worker] of workers) if (Date.now() - worker.lastHeartbeat > 35000) { worker.status = "OFFLINE"; if (activeWorker?.workerId === id) workerStatus("OFFLINE", { workerId: id }); } }, 10000);
+setInterval(() => {
+  for (const task of tasks.values()) if (task.status === 'RUNNING' && !task.stallNotified && executionTimes(task).stalled) { task.stallNotified = true; broadcast({ type: 'task.progress.stalled', taskId: task.taskId, error: '执行暂时没有新进度，仍受执行期限监管。' }); }
+}, 1000);
+setInterval(() => { for (const [id, worker] of workers) if (Date.now() - worker.lastHeartbeat > Number(process.env.WORKER_TIMEOUT_MS || 35000)) { worker.status = "OFFLINE"; if (activeWorker?.workerId === id) { workerStatus("OFFLINE", { workerId: id }); activeWorker.terminate(); } } }, 10000);
 server.listen(port, host, () => console.log(`mashang-hub control plane listening at http://${host}:${port}`));

@@ -1,6 +1,7 @@
-node_modules
 .git
+node_modules
 .local
-tests
-*.log
-.DS_Store
+data
+.env
+.env.*
+*.jsonl

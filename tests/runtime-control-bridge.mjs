@@ -139,7 +139,7 @@ try {
   await api(`/api/runtime/controls/${dropped.body.controlId}/decision`, "POST", { approve: true });
   await waitControl(dropped.body.controlId, "RUNNING");
   ws.close();
-  await waitControl(dropped.body.controlId, "FAILED");
+  await waitControl(dropped.body.controlId, "INTERRUPTED");
 
   console.log("Runtime control worker-hub bridge checks passed");
 } finally {

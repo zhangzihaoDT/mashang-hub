@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { PublishGate, TOOL_DENIAL, verifiedToolDenial } from "./publishing/gate.mjs";
+import { ExecutionJournal } from "./execution-journal.mjs";
 import { WebSocket } from "ws";
 import { resolveLocalArtifact } from "./artifact-resolver.mjs";
 import { buildRegistry } from "./runtime/registry.mjs";
@@ -19,6 +20,7 @@ const opencodeURL = process.env.OPENCODE_URL || "http://127.0.0.1:4096";
 const projectRoot = process.env.MASHANG_SERVICE_ROOT;
 const heartbeatMs = Number(process.env.WORKER_HEARTBEAT_MS || 10000);
 const stateFile = process.env.WORKER_STATE_FILE || `${homedir()}/.mashang-hub/worker-state.json`;
+const journal = new ExecutionJournal(process.env.WORKER_EXECUTION_JOURNAL || `${stateFile}.executions.json`);
 const publishingEnabled = process.env.MASHANG_PUBLISH_ENABLED === "1";
 const publishing = publishingEnabled ? new PublishGate({
   directory: process.env.MASHANG_PUBLISH_GATE_DIR || `${homedir()}/.mashang-hub/publish-gate`,
@@ -74,7 +76,7 @@ async function openCode(path, options = {}) {
   return fetch(url, { ...rest, headers: { "content-type": "application/json", "x-opencode-directory": directory, ...(rest.headers || {}) } });
 }
 async function openCodeJSON(path, options = {}) { const response = await openCode(path, options); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || `OpenCode HTTP ${response.status}`); return data; }
-function send(message) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
+function send(message) { message = journal.record(message); if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
 function heartbeat() { send({ type: "worker.heartbeat", workerId, timestamp: new Date().toISOString(), status: busy ? "BUSY" : "ONLINE" }); }
 function modelList(data) {
   const all = Object.values(data.providers || {}).flatMap((provider) => Object.values(provider.models || {}).map((model) => ({ ...model, providerID: model.providerID || provider.id })));
@@ -114,12 +116,13 @@ async function listenOpenCodeEvents() {
     const response = await openCode("/event", { headers: { accept: "text/event-stream" } }); if (!response.ok || !response.body) throw new Error(`event HTTP ${response.status}`);
     console.log("opencode connected"); send({ type: "worker.status", workerId, status: busy ? "BUSY" : "ONLINE", opencode: "CONNECTED" }); await publishRegistration();
     eventReader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); if (type.includes("permission") && !publishingEnabled) { const requestId = event.properties?.id || event.properties?.permissionID; const openCodeSessionId = event.properties?.sessionID; if (requestId && openCodeSessionId) permissionSession.set(requestId, openCodeSessionId); send({ type: "permission.requested", requestId, request: event.properties }); } else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
+    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); if (['message.part.updated', 'message.part.delta', 'message.updated'].includes(type)) { const sessionID = event.properties?.part?.sessionID || event.properties?.info?.sessionID || event.properties?.sessionID; const taskId = sessionToTask.get(sessionID); if (taskId && Date.now() - (progressSeen.get(`${taskId}:ts`) || 0) >= 1000) { progressSeen.set(`${taskId}:ts`, Date.now()); send({ type: 'opencode.progress', taskId, value: type }); } } if (type.includes("permission") && !publishingEnabled) { const requestId = event.properties?.id || event.properties?.permissionID; const openCodeSessionId = event.properties?.sessionID; if (requestId && openCodeSessionId) permissionSession.set(requestId, openCodeSessionId); send({ type: "permission.requested", requestId, request: event.properties }); } else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
   } catch { send({ type: "worker.status", workerId, status: "ERROR", opencode: "DISCONNECTED" }); setTimeout(listenOpenCodeEvents, 3000); }
   finally { listening = false; }
 }
 async function handleTask(task) {
   if (activeTasks.has(task.taskId)) return;
+  if (!journal.begin(task)) { sendReconciliation([task]); return; }
   console.log(`task received: ${task.taskId}`);
   const workspace = resolveWorkspace(workspaces, task.workspaceId);
   if (!workspace) {
@@ -130,7 +133,7 @@ async function handleTask(task) {
   const controller = new AbortController();
   const record = { controller, openCodeSessionId: null, source: null };
   activeTasks.set(task.taskId, record);
-  const safety = setTimeout(() => { record.source = record.source || "timeout"; controller.abort(); }, safetyAbortMs);
+  const safety = setTimeout(() => { record.source = record.source || "timeout"; controller.abort(); }, (task.policy?.executionDeadlineMs || safetyAbortMs) + timeoutConfig().graceMs + 30000);
   busy += 1;
   send({ type: "task.accepted", taskId: task.taskId, sessionId: task.sessionId }); console.log(`task accepted: ${task.taskId}`);
   send({ type: "task.running", taskId: task.taskId, sessionId: task.sessionId });
@@ -185,7 +188,7 @@ async function publishRegistration() {
   let models = []; let status = busy ? "BUSY" : "ONLINE";
   try { models = modelList(await openCodeJSON("/config/providers")); }
   catch (error) { status = "ERROR"; send({ type: "worker.status", workerId, status, error: error.message }); }
-  send({ type: "worker.register", workerId, status, models, workspaces: publicWorkspaceList(workspaces) });
+  send({ type: "worker.register", taskProtocolVersion: 1, workerId, status, models, workspaces: publicWorkspaceList(workspaces) });
 }
 async function publishRuntimeSnapshot() {
   if (socket?.readyState !== WebSocket.OPEN || runtimePublishing) return;
@@ -200,6 +203,8 @@ async function publishRuntimeSnapshot() {
   }
 }
 async function handleControlRequest(message) {
+  if (activeControls.has(message.controlId)) return;
+  if (!journal.begin(message)) { sendReconciliation([{ ...message, taskId: message.controlId }]); return; }
   const controller = new AbortController();
   activeControls.set(message.controlId, controller);
   console.log(`control received: ${message.controlId} op=${message.op} target=${message.targetId}`);
@@ -229,11 +234,15 @@ function handlePermissionReply(message) {
   const directory = sessionWorkspace.get(openCodeSessionId) || defaultWorkspace?.root || projectRoot;
   openCode(`/permission/${encodeURIComponent(message.requestId)}/reply`, { method: "POST", directory, body: JSON.stringify({ response: message.response }) }).catch(() => {});
 }
+function sendReconciliation(requests) {
+  const records = journal.reconcile(requests, (id, executor) => executor === 'agent' ? Boolean(activeTasks.get(id) && !activeTasks.get(id).controller.signal.aborted) : Boolean(activeControls.get(id) && !activeControls.get(id).signal.aborted));
+  send({ type: 'worker.reconcile', workerId, records });
+}
 async function register() { runtimeSequence = 0; await publishRegistration(); listenOpenCodeEvents(); publishRuntimeSnapshot(); }
 function connect() {
   const url = new URL(hubURL); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = "/worker";
   socket = new WebSocket(url, { headers: { Authorization: `Bearer ${workerSecret}` } });
-  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") handlePermissionReply(message); } catch { /* Keep worker alive on malformed control messages. */ } });
+  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "worker.reconcile.request") sendReconciliation(message.tasks || []); else if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") handlePermissionReply(message); } catch { /* Keep worker alive on malformed control messages. */ } });
   socket.on("close", () => setTimeout(connect, 2000)); socket.on("error", () => socket.close());
 }
 await loadMappings(); setInterval(heartbeat, heartbeatMs); setInterval(publishRuntimeSnapshot, runtimeSnapshotMs); connect();

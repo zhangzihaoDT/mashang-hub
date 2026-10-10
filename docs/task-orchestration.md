@@ -30,3 +30,5 @@ docker build --build-arg VCS_REF="$(git rev-parse HEAD)" --build-arg VERSION="$(
 ```
 
 另外用 git status --porcelain 核对无未跟踪源文件。镜像 revision 应与部署记录中的提交一致。此文档不代表已构建或部署新镜像。
+
+`npm run image:build` 自动检查干净工作区，并写入 Git revision 与 package version 的 OCI label。Docker 默认数据库路径为 `/data/tasks.sqlite`，部署必须挂载持久卷；单实例运行。

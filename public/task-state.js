@@ -17,6 +17,7 @@ export function isTerminalTaskState(status) { return terminalStates.has(status);
 export function transitionTaskState(current, event) {
   if (!event.taskId) return current;
   if (current.taskId && current.taskId !== event.taskId) return current;
+  if (event.type === "task.resumed" && current.status === "INTERRUPTED") return { taskId: event.taskId, status: "RUNNING" };
   if (terminalStates.has(current.status)) return current;
   const next = eventState[event.type];
   if (!next) return current;

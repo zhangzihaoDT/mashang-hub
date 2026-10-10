@@ -8,8 +8,10 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY server.mjs README.md ./
 COPY server ./server
+COPY scripts/task-backup.mjs ./scripts/task-backup.mjs
 COPY public ./public
 ENV HOST=0.0.0.0
 ENV PORT=3000
+ENV HUB_TASK_DB=/data/tasks.sqlite
 EXPOSE 3000
 CMD ["node", "server.mjs"]

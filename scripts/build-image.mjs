@@ -1,0 +1,11 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+const root = fileURLToPath(new URL('../', import.meta.url));
+const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+if (git('status', '--porcelain')) throw new Error('Image builds require a clean committed source tree');
+const revision = git('rev-parse', 'HEAD');
+const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url))).version;
+const tag = process.argv[2] || `mashang-hub:${version}`;
+execFileSync('docker', ['build', '--build-arg', `VCS_REF=${revision}`, '--build-arg', `VERSION=${version}`, '-t', tag, '.'], { cwd: root, stdio: 'inherit' });
+console.log(`Built ${tag} from ${revision}`);

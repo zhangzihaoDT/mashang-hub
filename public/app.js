@@ -154,6 +154,8 @@ async function ensureSession() {
   if (!state.session) state.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "mashang-hub" }) });
   localStorage.setItem("mashang-hub-session", state.session.id);
   renderSession(); renderDebug();
+  const latest = (await api('/api/tasks')).find(task => task.conversationId === state.session.id && ['DISPATCHED', 'RUNNING', 'INTERRUPTED', 'UNCERTAIN'].includes(task.status));
+  if (latest && !state.activeTaskId) { state.activeTaskId = latest.taskId; state.turnId = latest.turnId; state.taskState = latest.status === 'DISPATCHED' ? 'SUBMITTING' : latest.status === 'UNCERTAIN' ? 'INTERRUPTED' : latest.status; state.turnActive = latest.status === 'RUNNING' || latest.status === 'DISPATCHED'; setStatus(state.taskState, latest.status === 'UNCERTAIN' ? '结果待核对，禁止自动重试' : latest.status === 'INTERRUPTED' ? '等待 Worker 执行对账' : '已恢复任务状态'); updateCancelVisibility(); }
 }
 function parseMessage(data) { return (data?.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n"); }
 function actualModel(info) { const modelID = info?.modelID || info?.model?.id; const providerID = info?.providerID || info?.model?.providerID; const known = state.models?.find((model) => model.modelID === modelID && model.providerID === providerID); return { label: known ? modelLabel(known) : modelID ? `${providerID || ""}/${modelID}` : "Unknown model", modelID, providerID, cost: info?.cost, tokens: info?.tokens }; }
@@ -194,6 +196,8 @@ function handleServerEvent(event) {
   if (event.type === "worker.status") { state.models = event.models || state.models; if (event.models) renderModelOptions(event.models); setConnection(["ONLINE", "BUSY"].includes(event.status), event.status); return; }
   if (event.type === "session.mapped") { state.openCodeSessionId = event.openCodeSessionId; renderDebug(); return; }
   if (event.type === "task.timeout.warning") { if (!isTerminalState()) { setStatusLabel("运行超时，正在尝试取消"); updateRunningLabel("运行超时，正在尝试取消"); } return; }
+  if (event.type === 'task.resumed' && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, 'task.resumed'); state.turnActive = true; pushProcessNote('已核对 Worker 执行，任务继续运行'); return; }
+  if (event.type === 'task.progress.stalled' && event.taskId === state.activeTaskId) { pushProcessNote(event.error); return; }
   if (event.type === "task.accepted") { applyTaskEvent(event.taskId, "task.accepted"); return; }
   if (event.type === "task.running") { applyTaskEvent(event.taskId, "task.running"); return; }
   if (event.type === "agent.message.delta" && event.taskId === state.activeTaskId) { state.assistantText += event.text || ""; updateRunningLabel("正在生成结果"); return; }

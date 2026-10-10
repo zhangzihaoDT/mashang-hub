@@ -54,3 +54,6 @@ state = { taskId, status: "RUNNING" };
 assert.deepEqual(transitionTaskState(state, { type: "task.running", taskId: "other-task" }), state);
 assert.deepEqual(transitionTaskState(state, { type: "task.running" }), state);
 console.log("Task state machine regression checks passed");
+
+assert.equal(transitionTaskState({taskId,status:"INTERRUPTED"},{taskId,type:"task.resumed"}).status,"RUNNING");
+assert.equal(transitionTaskState({taskId,status:"COMPLETED"},{taskId,type:"task.resumed"}).status,"COMPLETED");

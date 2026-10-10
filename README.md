@@ -208,12 +208,14 @@ Terminal states: `COMPLETED`, `FAILED`, `INTERRUPTED`, `TIMEOUT`, `CANCELLED`. O
 Timeouts (both configurable):
 
 ```bash
-TASK_TIMEOUT_MS=180000        # soft timeout
+TASK_EXECUTION_DEADLINE_MS=900000 # default execution deadline (15 minutes)
+TASK_PROGRESS_TIMEOUT_MS=180000   # notify when no task progress
+TASK_TIMEOUT_MS=180000            # legacy deadline override, if explicitly set
 TASK_CANCEL_GRACE_MS=10000    # grace before hard timeout
 ```
 
 - Soft timeout: broadcasts `task.timeout.warning`, shows "运行超时，正在尝试取消", and sends `task.cancel` to the Worker.
-- Hard timeout: forces terminal `task.timeout` with reason `WORKER_REQUEST_TIMEOUT`.
+- If cancellation is not acknowledged during the grace period, retain `INTERRUPTED` / `UNCERTAIN` and wait for execution evidence; do not claim the process stopped.
 - Worker aborts the in-flight OpenCode request through an `AbortController`.
 
 Cancel is a request, not an immediate verdict. The first valid terminal state wins: if the Worker returns normally before the cancel takes effect, the turn settles `COMPLETED`; otherwise it settles `task.cancelled` / `USER_CANCELLED`.
@@ -276,13 +278,13 @@ Worker validates and announces `.md`, `.html`, `.csv`, and `.png` files under th
 Build and run the control plane:
 
 ```bash
-docker build -t mashang-hub:0.2 .
-docker run --rm -p 3000:3000 \
+npm run image:build
+docker run --rm -p 3000:3000 -v mashang-hub-data:/data \
   -e HOST=0.0.0.0 \
   -e PORT=3000 \
   -e HUB_ACCESS_TOKEN=<private-user-token> \
   -e WORKER_SECRET=<private-worker-secret> \
-  mashang-hub:0.2
+  mashang-hub:0.3.1
 ```
 
 Configure Sealos ingress for HTTPS and use the resulting `https://` URL as the Worker `HUB_URL`. The actual Sealos deployment and phone-over-cellular test are not performed by this repository change.
@@ -312,3 +314,13 @@ The `myknbase` Worker service and workspace now point to V2 (`~/Documents/github
 生产环境必须将 `HUB_TASK_DB` 指向持久化卷（例如 `/data/tasks.sqlite`）；仅支持单 Hub 实例写入，不允许多个副本或网络共享 SQLite 文件。启用 WAL、FULL synchronous 和事务。数据库版本通过 user_version 管理；新版本数据库不能由旧代码打开。升级前备份，回滚时恢复匹配版本的备份，不能只回滚镜像。
 
 运行 `HUB_TASK_DB=/data/tasks.sqlite npm run task:backup -- /backup/tasks.sqlite` 创建一致性快照（目标必须不存在）；备份需另存到独立持久存储，并定期验证恢复。不要仅复制运行中的主文件而忽略 WAL。原 JSONL 继续用于审计。P1 不恢复回答和 Artifact 内容，也不自动重放待审批或已分发任务。
+
+## Long Tasks and Recovery（P2 首个纵向场景）
+
+每个 Agent Task 支持 `policy.executionDeadlineMs` 与 `policy.progressTimeoutMs`（默认执行 15 分钟、进度静默 3 分钟，执行上限默认 24 小时）。未配置旧 `TASK_TIMEOUT_MS` 时不再使用统一 180 秒期限；显式旧配置仍作为默认期限兼容。审批等待不计入执行时间。Worker 心跳只证明在线；真实 OpenCode 消息事件更新进度，静默仅通知，执行期限到达后请求取消。
+
+Worker 将执行 claim 和结果 outbox 持久化到 `WORKER_EXECUTION_JOURNAL`（默认 `<WORKER_STATE_FILE>.executions.json`）。重连按 taskId / attemptId / dispatchId 对账，仅本 Worker 进程内真实活跃的执行可恢复 RUNNING；历史 RUNNING 文件不是存活证明。已完成结果可回传，但不重新执行。Worker 重启且无法验证执行时保持 INTERRUPTED，可能存在外部副作用时保持 UNCERTAIN。UNCERTAIN 不自动重试。
+
+更新 Hub 与 Worker 后才能获得完整恢复语义；旧 Worker 保持兼容但无法提供可信对账。Hub 数据库和 Worker journal 均需持久化、定期备份；损坏 journal 会拒绝启动。当前 Worker journal 包含本地结果正文且无自动清理，需保持目录私有。Artifact 下载注册表仍只在 Worker 内存，重启后的历史文件下载尚未恢复。
+
+`npm run test:long-task` 使用真实 Hub/Worker 进程和 Mock OpenCode，持续 185 秒并在期间重启 Hub，验证原执行身份与单次调用。当前完成的是 Agent 长任务与恢复纵向场景；通用排队、后台任务列表和 External Action 正式接入仍待后续验收。

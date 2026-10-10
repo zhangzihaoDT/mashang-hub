@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,6 +31,9 @@ try {
   assert.equal(store.get('approval').status, 'COMPLETED');
   assert.throws(() => store.save({ ...store.get('task1'), status: 'QUEUED' }));
   store.close();
+  execFileSync(process.execPath, ['scripts/task-backup.mjs', join(directory, 'backup.sqlite')], { env: { ...process.env, HUB_TASK_DB: path } });
+  const backup = new TaskStore(join(directory, 'backup.sqlite'));
+  assert.equal(backup.get('approval').status, 'COMPLETED'); backup.close();
   assert.ok(!readFileSync(path).includes(Buffer.from('PRIVATE_SENTINEL')));
   console.log('SQLite task persistence, approvals, identities, terminal guard and privacy passed');
 } finally { try { store.close(); } catch {} rmSync(directory, { recursive: true, force: true }); }

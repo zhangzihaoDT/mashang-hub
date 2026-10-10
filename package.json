@@ -1,6 +1,6 @@
 {
   "name": "mashang-hub",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "bin": {
@@ -34,10 +34,13 @@
     "test:task-log": "node tests/task-log.mjs",
     "test:launchd": "node tests/launchd.mjs",
     "test:runtime": "node tests/runtime-registry.mjs && node tests/runtime-jobs.mjs && node tests/runtime-logs.mjs && node tests/runtime-control.mjs && node tests/runtime-probes.mjs && node tests/runtime-protocol.mjs && node tests/runtime-contract.mjs && node tests/runtime-bridge.mjs && node tests/runtime-control-contract.mjs && node tests/runtime-control-exec.mjs && node tests/runtime-control-bridge.mjs && node tests/runtime-ui.mjs",
-    "test": "npm run test:dom && npm run test:task-state && npm run test:task-timeout && npm run test:task-log && npm run test:launchd && npm run test:artifact && npm run test:artifact-policy && npm run test:artifact-resolver && npm run test:result-contract && npm run test:workspaces && npm run test:task-workspace-bridge && npm run test:runtime && npm run test:publishing && npm run test:task-store",
+    "test": "npm run test:dom && npm run test:task-state && npm run test:task-timeout && npm run test:task-log && npm run test:launchd && npm run test:artifact && npm run test:artifact-policy && npm run test:artifact-resolver && npm run test:result-contract && npm run test:workspaces && npm run test:task-workspace-bridge && npm run test:runtime && npm run test:publishing && npm run test:task-store && npm run test:recovery",
     "test:publishing": "node tests/publishing.mjs && node tests/publishing-bridge.mjs",
     "test:task-store": "node tests/task-store.mjs && node tests/task-store-bridge.mjs",
-    "task:backup": "node scripts/task-backup.mjs"
+    "task:backup": "node scripts/task-backup.mjs",
+    "test:recovery": "node tests/task-policy.mjs && node tests/execution-journal.mjs && node tests/long-task-bridge.mjs && node tests/reconciliation-bridge.mjs",
+    "test:long-task": "LONG_TASK_MS=185000 node tests/long-task-bridge.mjs",
+    "image:build": "node scripts/build-image.mjs"
   },
   "engines": {
     "node": ">=22.13"

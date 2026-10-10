@@ -16,6 +16,8 @@ const OPERATION_STATES = {
   CANCELLED: { label: "已取消", cls: "failed" },
 };
 const CONTROL_STATES = {
+  INTERRUPTED: { label: "等待执行对账", cls: "unknown" },
+  UNCERTAIN: { label: "结果待核对", cls: "unknown" },
   AWAITING_PERMISSION: { label: "待审批", cls: "running" },
   RUNNING: { label: "执行中", cls: "running" },
   COMPLETED: { label: "完成", cls: "completed" },
