@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { TaskStore } from '../server/task-store.mjs';
+const directory = mkdtempSync(join(tmpdir(), 'hub-store-'));
+const path = join(directory, 'tasks.sqlite');
+let store = new TaskStore(path);
+const create = (id, status = 'CREATED') => store.save({ taskId: id, status, source: 'conversation', executor: 'agent', createdAt: Date.now(), updatedAt: Date.now(), prompt: 'PRIVATE_SENTINEL', text: 'PRIVATE_SENTINEL' });
+try {
+  create('task1');
+  const dispatch = store.dispatch('task1');
+  assert.ok(dispatch.attemptId && dispatch.dispatchId);
+  assert.throws(() => store.dispatch('task1'));
+  store.save({ ...dispatch, status: 'RUNNING' });
+  create('approval', 'AWAITING_APPROVAL');
+  store.saveSession({ id: 'hub1', title: 'PRIVATE_SENTINEL', turnCount: 3 });
+  store.close();
+  store = new TaskStore(path);
+  store.recover();
+  assert.equal(store.get('task1').status, 'INTERRUPTED');
+  assert.equal(store.get('task1').dispatchId, dispatch.dispatchId);
+  assert.equal(store.get('approval').status, 'AWAITING_APPROVAL');
+  assert.equal(store.sessions()[0].turnCount, 3);
+  const approved = store.dispatch('approval');
+  assert.throws(() => store.dispatch('approval'));
+  assert.equal(store.db.prepare('SELECT count(*) AS n FROM approvals').get().n, 1);
+  store.save({ ...approved, status: 'COMPLETED' });
+  store.save({ ...approved, status: 'FAILED' });
+  assert.equal(store.get('approval').status, 'COMPLETED');
+  assert.throws(() => store.save({ ...store.get('task1'), status: 'QUEUED' }));
+  store.close();
+  assert.ok(!readFileSync(path).includes(Buffer.from('PRIVATE_SENTINEL')));
+  console.log('SQLite task persistence, approvals, identities, terminal guard and privacy passed');
+} finally { try { store.close(); } catch {} rmSync(directory, { recursive: true, force: true }); }

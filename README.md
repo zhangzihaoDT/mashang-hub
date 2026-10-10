@@ -27,7 +27,7 @@ mashang-worker on Mac
        +-- local mashang-service and dataset
 ```
 
-The Hub stores lightweight in-memory Hub Session, task and Artifact metadata. Worker maps Hub Session IDs to OpenCode Session IDs. OpenCode IDs are not treated as browser IDs.
+The Hub persists task and conversation metadata in SQLite; artifact metadata remains in memory. Worker maps Hub Session IDs to OpenCode Session IDs. OpenCode IDs are not treated as browser IDs.
 
 ## Local Run
 
@@ -289,7 +289,7 @@ Configure Sealos ingress for HTTPS and use the resulting `https://` URL as the W
 
 ## Known Limitations
 
-- Hub and Worker state are currently in memory; restart recovery of task state is limited.
+- Hub task and approval records survive restart in SQLite. In-flight tasks await Worker reconciliation; automatic replay is disabled.
 - Worker session mappings are persisted best-effort to a local JSON file; this is not full task recovery.
 - One active Worker is supported; there is no scheduling or multi-worker routing.
 - Artifact payloads are base64 encoded in the WebSocket response and capped at 20 MB on the Worker.
@@ -304,3 +304,11 @@ The `myknbase` Worker service and workspace now point to V2 (`~/Documents/github
 启用此模式会将该 Worker 创建的所有 Hub OpenCode 会话工具权限设为 deny-all，防止 Agent 用 Shell 绕过确认。因此原有 Agent 工具能力会受限；当前不支持同时开放任意本地执行工具。发布依靠 Worker 持久化确认与防重记录，异常保持 UNCERTAIN，不自动重试。配置、Mock 验证、恢复约束和待真实验收项见 [对话发布验收报告](docs/publishing-acceptance.md)。本轮没有部署或真实发布。
 
 正式 Publishing 启用的前置条件是 OS 凭证隔离，并保留 OpenCode 普通工具。现有 deny-all 模式仅用于实验验收，不是正式方案。实施计划见 [任务编排演进](docs/task-orchestration.md)。
+
+## Task Store（P1）
+
+需要 Node >=22.13。默认数据库为 `.local/tasks.sqlite`，可通过 `HUB_TASK_DB` 设置绝对路径。新增 `GET /api/tasks` 与 `GET /api/tasks/:taskId` 返回通用任务记录；Conversation 和 Runtime 入口保持兼容。任务数据库不保存 prompt、回答、业务正文或本地路径。会话标题持久化为通用标题。
+
+生产环境必须将 `HUB_TASK_DB` 指向持久化卷（例如 `/data/tasks.sqlite`）；仅支持单 Hub 实例写入，不允许多个副本或网络共享 SQLite 文件。启用 WAL、FULL synchronous 和事务。数据库版本通过 user_version 管理；新版本数据库不能由旧代码打开。升级前备份，回滚时恢复匹配版本的备份，不能只回滚镜像。
+
+运行 `HUB_TASK_DB=/data/tasks.sqlite npm run task:backup -- /backup/tasks.sqlite` 创建一致性快照（目标必须不存在）；备份需另存到独立持久存储，并定期验证恢复。不要仅复制运行中的主文件而忽略 WAL。原 JSONL 继续用于审计。P1 不恢复回答和 Artifact 内容，也不自动重放待审批或已分发任务。

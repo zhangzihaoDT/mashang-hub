@@ -15,7 +15,7 @@ const server = spawn(process.execPath, [join(root, "server.mjs")], {
   env: {
     ...process.env,
     HUB_HOST: "127.0.0.1",
-    PORT: String(port),
+    HUB_TASK_DB: ":memory:", PORT: String(port),
     WORKER_SECRET: secret,
     HUB_ACCESS_TOKEN: "",
     CONTROL_CANCEL_GRACE_MS: "400",

@@ -15,7 +15,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const server = spawn(process.execPath, [join(root, "server.mjs")], {
   cwd: root,
-  env: { ...process.env, HUB_HOST: "127.0.0.1", PORT: String(port), WORKER_SECRET: secret, HUB_ACCESS_TOKEN: "", HUB_TURN_LOG: turnLog },
+  env: { ...process.env, HUB_HOST: "127.0.0.1", HUB_TASK_DB: ":memory:", PORT: String(port), WORKER_SECRET: secret, HUB_ACCESS_TOKEN: "", HUB_TURN_LOG: turnLog },
   stdio: ["ignore", "ignore", "pipe"],
 });
 

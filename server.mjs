@@ -1,3 +1,4 @@
+import { TaskStore } from "./server/task-store.mjs";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -28,6 +29,23 @@ let runtimeSnapshot = null;
 let runtimeReceivedAt = null;
 let runtimeSnapshotSequence = 0;
 const controls = new Map();
+const taskStore = new TaskStore(process.env.HUB_TASK_DB || join(root, '.local/tasks.sqlite'));
+taskStore.recover();
+for (const session of taskStore.sessions()) sessions.set(session.id, session);
+for (const record of taskStore.list()) {
+  if (record.source === 'conversation') tasks.set(record.taskId, { ...record, sessionId: record.conversationId, status: record.legacyStatus || record.status, timers: {}, pendingCompletion: false });
+  else if (record.source === 'runtime') controls.set(record.taskId, { ...record, controlId: record.taskId, status: record.legacyStatus || record.status, timeoutMs: record.policy?.executionDeadlineMs, timers: {} });
+}
+function persistTask(task) {
+  const old = taskStore.get(task.taskId);
+  const status = ({ SUBMITTING: old?.status === 'RUNNING' ? 'RUNNING' : 'DISPATCHED', TIMEOUT: 'FAILED' })[task.status] || task.status;
+  return taskStore.save({ ...old, ...task, status, legacyStatus: task.status, finishedAt: ['COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT'].includes(task.status) ? Date.now() : null });
+}
+function persistControl(control) {
+  const old = taskStore.get(control.controlId);
+  const status = ({ AWAITING_PERMISSION: 'AWAITING_APPROVAL', REJECTED: 'CANCELLED', REFUSED: 'FAILED', TIMEOUT: 'FAILED' })[control.status] || control.status;
+  return taskStore.save({ ...old, ...control, taskId: control.controlId, status, legacyStatus: control.status, finishedAt: isTerminalControl(control.status) ? Date.now() : null });
+}
 
 function json(res, status, data, headers = {}) { res.writeHead(status, { "content-type": "application/json; charset=utf-8", ...headers }); res.end(JSON.stringify(data)); }
 async function body(req) { let value = ""; for await (const chunk of req) value += chunk; return value ? JSON.parse(value) : {}; }
@@ -60,6 +78,8 @@ function finalizeTask(task, { event, status, reason, error }) {
   task.status = status;
   task.updatedAt = Date.now();
   clearTaskTimers(task);
+  task.reason = reason || null;
+  persistTask(task);
   const elapsedMs = task.updatedAt - task.createdAt;
   finalizeTurn(task.taskId, { event, status, reason, elapsedMs });
   broadcast({ type: event, taskId: task.taskId, sessionId: task.sessionId, conversationId: task.conversationId, turnId: task.turnId, status, reason: reason || null, error: error || null, elapsedMs });
@@ -80,6 +100,7 @@ function finalizeControl(control, status, reason, code = null) {
   control.code = code;
   control.updatedAt = Date.now();
   clearControlTimers(control);
+  persistControl(control);
   broadcastControl(control);
   console.log(`control settled: ${control.controlId} ${status} reason=${reason || "none"}`);
   return true;
@@ -210,6 +231,8 @@ function onWorkerMessage(message) {
       if (message.externalEffectPossible === true) task.externalEffectPossible = true;
       task.status = message.type === "task.accepted" ? "SUBMITTING" : "RUNNING";
       task.updatedAt = Date.now();
+      if (task.status === "RUNNING") task.startedAt ||= Date.now();
+      persistTask(task);
       updateTurn(task.taskId, { status: task.status });
     }
     broadcast(message);
@@ -256,6 +279,7 @@ function onWorkerMessage(message) {
 function createHubSession(title = "mashang-hub") {
   const session = { id: `hub_${randomUUID()}`, title, workerId: null, openCodeSessionId: null, turnCount: 0, createdAt: new Date().toISOString() };
   sessions.set(session.id, session);
+  taskStore.saveSession(session);
   return session;
 }
 
@@ -323,7 +347,9 @@ const server = createServer(async (req, res) => {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+    Object.assign(control, { source: 'runtime', executor: 'operation', workerId: activeWorker.workerId, attempt: 0, policy: { requiresApproval: true, retry: 'manual', executionDeadlineMs: controlTimeoutConfig(process.env, control.timeoutMs).requestMs } });
     controls.set(control.controlId, control);
+    persistControl(control);
     console.log(`control created: ${control.controlId} op=${op} target=${targetId}`);
     broadcast({ type: "runtime.control.requested", ...publicControl(control) });
     broadcast({ type: "runtime.control.permission.requested", controlId: control.controlId, op, targetId });
@@ -336,10 +362,12 @@ const server = createServer(async (req, res) => {
     if (!control) return json(res, 404, { error: "Control not found" });
     if (control.status !== "AWAITING_PERMISSION") return json(res, 409, { error: "Control already decided", status: control.status });
     const approved = Boolean((await body(req)).approve);
-    if (!approved) { finalizeControl(control, "REJECTED", "USER_REJECTED"); return json(res, 200, publicControl(control)); }
+    if (!approved) { taskStore.reject(control.controlId, "CANCELLED", "USER_REJECTED"); finalizeControl(control, "REJECTED", "USER_REJECTED"); return json(res, 200, publicControl(control)); }
+    const dispatch = taskStore.dispatch(control.controlId, { legacyStatus: "RUNNING", startedAt: Date.now(), workerId: activeWorker?.workerId || control.workerId });
+    Object.assign(control, dispatch);
     control.status = "RUNNING";
     control.updatedAt = Date.now();
-    const dispatched = sendWorker({ type: "runtime.control.request", controlId: control.controlId, op: control.op, targetId: control.targetId });
+    const dispatched = sendWorker({ type: "runtime.control.request", controlId: control.controlId, attemptId: control.attemptId, dispatchId: control.dispatchId, op: control.op, targetId: control.targetId });
     broadcastControl(control);
     console.log(`control approved: ${control.controlId} op=${control.op} target=${control.targetId}`);
     if (!dispatched) { finalizeControl(control, "FAILED", "WORKER_OFFLINE"); return json(res, 200, publicControl(control)); }
@@ -383,16 +411,24 @@ const server = createServer(async (req, res) => {
     session.turnCount = (session.turnCount || 0) + 1;
     const turnId = `turn_${String(session.turnCount).padStart(3, "0")}`;
     const task = { taskId: `task_${randomUUID()}`, sessionId: session.id, conversationId: session.id, turnId, model: modelString(input.model), workspaceId, status: "SUBMITTING", hasText: false, artifactCount: 0, lastProgress: null, pendingCompletion: false, attemptCompletion: null, timers: {}, createdAt: Date.now() };
+    Object.assign(task, { source: 'conversation', executor: 'agent', workerId: activeWorker.workerId, attempt: 0, policy: { requiresApproval: false, retry: 'manual', executionDeadlineMs: timeoutConfig().requestMs } });
+    taskStore.save({ ...task, status: 'CREATED', legacyStatus: 'SUBMITTING', updatedAt: Date.now() });
+    Object.assign(task, taskStore.dispatch(task.taskId, { legacyStatus: 'SUBMITTING' }));
+    task.status = 'SUBMITTING';
     tasks.set(task.taskId, task);
     session.workerId = activeWorker.workerId;
+    taskStore.saveSession(session);
     createTurn({ conversationId: session.id, turnId, taskId: task.taskId, model: task.model, workspaceId });
     scheduleWatchdog(task);
     console.log(`task created: ${task.taskId} conversation=${session.id} turn=${turnId} workspace=${workspaceId || "default"}`);
-    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, sessionId: session.id, turnId, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
+    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, attemptId: task.attemptId, dispatchId: task.dispatchId, sessionId: session.id, turnId, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
     if (!dispatched) { console.log(`task dispatch failed: ${task.taskId} session=${session.id}`); finalizeTask(task, { event: "task.failed", status: "FAILED", reason: REASONS.OPENCODE_ERROR, error: "Mac Worker is offline" }); return json(res, 503, { error: "Mac Worker is offline", taskId: task.taskId }); }
     console.log(`task dispatched to worker: ${task.taskId} session=${session.id} worker=${activeWorker.workerId}`);
     return json(res, 202, publicTask(task));
   }
+  if (url.pathname === '/api/tasks' && req.method === 'GET') return json(res, 200, taskStore.list());
+  const taskQuery = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+  if (taskQuery && req.method === 'GET') { const record = taskStore.get(taskQuery[1]); return record ? json(res, 200, record) : json(res, 404, { error: 'Task not found' }); }
   const cancel = url.pathname.match(/^\/api\/tasks\/([^/]+)\/cancel$/);
   if (cancel && req.method === "POST") {
     const task = tasks.get(cancel[1]);

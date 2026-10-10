@@ -23,7 +23,7 @@ const oc = createServer(async (req,res) => {
 });
 await new Promise(resolve => oc.listen(0,'127.0.0.1',resolve));
 const hubPort = 39000 + Math.floor(Math.random()*1000); const base = `http://127.0.0.1:${hubPort}`;
-const hub = spawn(process.execPath,['server.mjs'], {cwd:repo,env:{...process.env,PORT:String(hubPort),HUB_HOST:'127.0.0.1',WORKER_SECRET:'mock-secret',HUB_ACCESS_TOKEN:'mock-access',HUB_TURN_LOG:join(temp,'turns.jsonl')},stdio:['ignore','ignore','pipe']});
+const hub = spawn(process.execPath,['server.mjs'], {cwd:repo,env:{...process.env,HUB_TASK_DB:":memory:",PORT:String(hubPort),HUB_HOST:'127.0.0.1',WORKER_SECRET:'mock-secret',HUB_ACCESS_TOKEN:'mock-access',HUB_TURN_LOG:join(temp,'turns.jsonl')},stdio:['ignore','ignore','pipe']});
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 async function until(predicate) { for(let i=0;i<100;i++) { const value=await predicate(); if(value)return value; await sleep(30); } throw new Error('bridge timeout'); }
 let worker; let cookie=''; let reader; const events=[];
