@@ -20,3 +20,7 @@ assert.equal(executionPolicy({executionClass:'invalid'},{}).executionClass,'quer
 assert.equal(executionPolicy({},{}).allowClassPromotion,true);
 assert.equal(executionPolicy({executionDeadlineMs:300},{}).allowClassPromotion,false);
 assert.equal(executionPolicy({executionClass:'query'},{}).allowClassPromotion,false);
+
+assert.equal(executionTimes({policy, startedAt:1000, permissionStartedAt:2000}, 999999).remainingMs, 899000);
+assert.equal(executionTimes({policy, startedAt:1000, permissionStartedAt:2000}, 999999).stalled, false);
+assert.equal(executionTimes({policy, startedAt:1000, permissionWaitMs:5000}, 7000).remainingMs, 899000);

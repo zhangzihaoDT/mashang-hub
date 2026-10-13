@@ -152,9 +152,13 @@ function renderMessage(item) {
   return `<div class="message assistant process"><div class="label">Assistant</div><ul class="process-steps">${steps}</ul>${meta}</div>`;
 }
 function permissionHTML() {
-  const request = state.pendingPermission || {};
-  return `<div class="permission"><strong>OpenCode 请求执行</strong><code>${escapeHTML(JSON.stringify(request.request || {}))}</code><div class="permission-actions"><button data-choice="once">允许一次</button><button data-choice="reject">拒绝</button></div></div>`;
+  const pending = state.pendingPermission;
+  const request = pending.request || {};
+  const labels = { external_directory: '访问项目外目录', read: '读取文件', bash: '执行命令', write: '写入文件' };
+  const scope = request.patterns?.join('\n') || request.metadata?.filepath || request.permission || '工具操作';
+  return `<div class="permission tool-permission" role="alert" aria-live="assertive"><strong>任务暂停 · 需要你的授权</strong><p>${escapeHTML(labels[request.permission] || request.permission || 'OpenCode 请求执行工具')}</p><pre>${escapeHTML(scope)}</pre><p>等待审批期间暂停执行计时。允许一次只批准当前请求，后续请求会再次提示。</p>${pending.error ? `<p role="alert">${escapeHTML(pending.error)}</p>` : ''}<div class="permission-actions"><button data-choice="once" ${pending.submitting ? 'disabled' : ''}>${pending.submitting ? '正在等待执行端确认…' : '允许本次并继续'}</button><button data-choice="always" ${pending.submitting ? 'disabled' : ''}>始终允许此范围</button><button data-choice="reject" ${pending.submitting ? 'disabled' : ''}>拒绝</button></div></div>`;
 }
+
 function renderMessages() {
   const container = $("#messages");
   const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
@@ -202,7 +206,31 @@ async function previewArtifact(card, artifact) {
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 optional("#artifacts")?.addEventListener("click", (event) => { const button = event.target.closest("[data-action='preview']"); if (!button) return; const card = button.closest(".artifact-card"); previewArtifact(card, state.artifacts[Number(card.dataset.index)]); });
-$("#messages").addEventListener("click", async (event) => { const button = event.target.closest("[data-choice]"); if (!button || !state.pendingPermission) return; const choice = button.dataset.choice; const id = state.pendingPermission.id; state.pendingPermission = null; renderMessages(); try { if (id) await api(`/api/permissions/${encodeURIComponent(id)}/reply`, { method: "POST", body: JSON.stringify({ response: choice }) }); if (!isTerminalState()) setStatus("RUNNING", "正在分析"); } catch { /* keep UI responsive */ } });
+$("#messages").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-choice]");
+  const context = state, pending = context.pendingPermission;
+  if (!button || !pending || pending.submitting || !pending.id) return;
+  pending.submitting = true; pending.error = null; renderMessages();
+  try {
+    await api(`/api/permissions/${encodeURIComponent(pending.id)}/reply`, { method: "POST", body: JSON.stringify({ response: button.dataset.choice }) });
+    resolvePermission(context, pending.id);
+  } catch (error) {
+    if (context.pendingPermission?.id === pending.id) { pending.submitting = false; pending.error = `审批未完成：${error.message}`; }
+  }
+  if (state === context) renderMessages();
+});
+function resolvePermission(context, id) {
+  context.permissionQueue = (context.permissionQueue || []).filter(item => item.id !== id);
+  if (context.pendingPermission?.id !== id) return;
+  context.pendingPermission = context.permissionQueue[0] || null;
+  if (state === context) {
+    if (!isTerminalState()) { context.taskState = context.pendingPermission ? 'WAITING_PERMISSION' : 'RUNNING'; setStatus(context.taskState, context.pendingPermission ? '等待你的授权' : '审批已确认，继续执行'); }
+    renderMessages();
+  } else if (!['COMPLETED', 'FAILED', 'TIMEOUT', 'CANCELLED', 'INTERRUPTED'].includes(context.taskState)) {
+    context.taskState = context.status = context.pendingPermission ? 'WAITING_PERMISSION' : 'RUNNING';
+  }
+}
+
 function logEvent(event) { const previous = state.events[state.events.length - 1]; if (event.type === "worker.status" && previous?.type === "worker.status" && previous.workerId === event.workerId && previous.status === event.status) return; state.events.push(event); if (state.events.length > 100) state.events.shift(); renderDebug(); }
 function renderDebug() { const panel = optional("#debugContent"); if (!panel) return; const last = state.events[state.events.length - 1]; panel.innerHTML = `<dl><dt>Conversation ID</dt><dd>${escapeHTML(state.session?.id || "-")}</dd><dt>Turn ID</dt><dd>${escapeHTML(state.turnId || "-")}</dd><dt>Task ID</dt><dd>${escapeHTML(state.activeTaskId || "-")}</dd><dt>OpenCode Session</dt><dd>${escapeHTML(state.openCodeSessionId || "-")}</dd><dt>Model</dt><dd>${escapeHTML(state.selectedModel ? `${state.selectedModel.providerID}/${state.selectedModel.modelID}` : "-")}</dd><dt>Status</dt><dd>${state.taskState}</dd><dt>Last Event</dt><dd>${escapeHTML(last?.type || "-")}</dd><dt>Events (${state.events.length})</dt></dl><pre>${escapeHTML(JSON.stringify(state.events.slice(-12), null, 2))}</pre>`; }
 
@@ -262,6 +290,7 @@ async function restoreSession(context) {
     }
   }
   if (latest && !context.activeTaskId) { context.activeTaskId = latest.taskId; context.turnId = latest.turnId; context.taskState = latest.status === 'DISPATCHED' ? 'SUBMITTING' : latest.status === 'UNCERTAIN' ? 'INTERRUPTED' : latest.status; context.turnActive = latest.status === 'RUNNING' || latest.status === 'DISPATCHED'; if (state === context) setStatus(context.taskState, latest.status === 'UNCERTAIN' ? '结果待核对，禁止自动重试' : latest.status === 'INTERRUPTED' ? '等待 Worker 执行对账' : '已恢复任务状态'); updateCancelVisibility(); }
+  for (const permission of await api('/api/permissions')) if (permission.taskId === context.activeTaskId) handleServerEvent(permission);
 }
 function parseMessage(data) { return (data?.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n"); }
 function actualModel(info) { const modelID = info?.modelID || info?.model?.id; const providerID = info?.providerID || info?.model?.providerID; const known = state.models?.find((model) => model.modelID === modelID && model.providerID === providerID); return { label: known ? modelLabel(known) : modelID ? `${providerID || ""}/${modelID}` : "Unknown model", modelID, providerID, cost: info?.cost, tokens: info?.tokens }; }
@@ -272,7 +301,7 @@ async function sendPrompt(text, publicationPreview = false) {
   state.taskTitle = text.trim().slice(0, 48); state.resultPlainText = false; state.startedAt = Date.now(); state.finishedAt = null;
   state.messages.push({ role: "user", text });
   state.assistantText = ""; state.artifactScanText = ""; state.artifacts = [];
-  state.activeTaskId = null; state.taskState = "UNDERSTANDING"; state.turnActive = true; state.pendingPermission = null;
+  state.activeTaskId = null; state.taskState = "UNDERSTANDING"; state.turnActive = true; state.pendingPermission = null; state.permissionQueue = [];
   renderMessages(); renderResult(""); renderArtifacts(); setStatus("UNDERSTANDING"); updateCancelVisibility(); $("#send").disabled = true;
   try {
     if (!state.session) await ensureSession();
@@ -295,18 +324,26 @@ function handleTerminal(event) {
   const label = event.error || { "task.failed": event.error || "执行失败", "task.timeout": "执行超时", "task.cancelled": "已取消", "task.interrupted": "执行中断" }[event.type];
   const changed = applyTaskEvent(event.taskId, event.type, label);
   if (!changed) return;
-  state.turnActive = false;
+  state.turnActive = false; state.pendingPermission = null; state.permissionQueue = []; renderMessages();
   renderResult("");
   updateCancelVisibility(); updateSendAvailability();
 }
-function showPermission(request) { if (isTerminalState()) return; state.pendingPermission = request; setStatus("WAITING_PERMISSION", "等待权限"); renderMessages(); }
+function showPermission(request) {
+  if (isTerminalState() || !request.id) return;
+  state.permissionQueue ||= [];
+  if (!state.permissionQueue.some(item => item.id === request.id)) state.permissionQueue.push(request);
+  state.pendingPermission = state.permissionQueue[0];
+  state.taskState = 'WAITING_PERMISSION';
+  setStatus('WAITING_PERMISSION', '任务暂停，等待你的授权'); renderMessages();
+  document.querySelector('.tool-permission')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 function handleServerEvent(event) {
   if (event.type === 'runtime.control.updated' && event.snapshotRef) {
     const context = Object.values(conversations).find(item => item?.session?.id === event.conversationId);
     if (context && (!context.operationControl || context.operationControl.controlId === event.controlId || event.status === 'PENDING_APPROVAL')) context.operationControl = event;
     renderPublication(); refreshExecutionInfo();
   }
-  if (event.type === "permission.requested" && event.request?.sessionID) {
+  if (event.type === "permission.requested" && !event.taskId && event.request?.sessionID) {
     const target = Object.values(conversations).find(context=>context?.openCodeSessionId === event.request.sessionID);
     if (!target) return;
     if (target !== state) { const visible=state; state=target; try { processServerEvent(event); } finally { state=visible; renderConversation(); } return; }
@@ -321,6 +358,7 @@ function handleServerEvent(event) {
 function processServerEvent(event) {
   if (event.taskId && !state.activeTaskId && state.turnActive) { state.earlyEvents.push(event); return; }
   logEvent(event);
+  if (event.type === 'permission.resolved') { for (const item of [...(state.permissionQueue || [])]) if (!event.requestId || item.id === event.requestId) resolvePermission(state, item.id); return; }
   if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); if (event.type === "runtime.snapshot") { runtimeSnapshot = event.snapshot; updateSendAvailability(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); } return; }
   if (event.type === "worker.status") { state.models = event.models || state.models; for (const context of Object.values(conversations)) if (context) context.models = state.models; if (event.models) renderModelOptions(event.models); setConnection(["ONLINE", "BUSY"].includes(event.status), event.status); return; }
   if (event.type === "session.mapped") { state.openCodeSessionId = event.openCodeSessionId; renderDebug(); return; }
@@ -328,7 +366,7 @@ function processServerEvent(event) {
   if (event.type === 'task.resumed' && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, 'task.resumed'); state.turnActive = true; pushProcessNote('已核对 Worker 执行，任务继续运行'); return; }
   if (event.type === 'task.progress.stalled' && event.taskId === state.activeTaskId) { pushProcessNote(event.error); return; }
   if (event.type === "task.accepted") { applyTaskEvent(event.taskId, "task.accepted"); return; }
-  if (event.type === "task.running") { applyTaskEvent(event.taskId, "task.running"); return; }
+  if (event.type === "task.running") { if (!state.pendingPermission) applyTaskEvent(event.taskId, "task.running"); return; }
   if (event.type === "agent.message.delta" && event.taskId === state.activeTaskId) { state.assistantText += event.text || ""; updateRunningLabel("正在生成结果"); return; }
   if (event.type === "agent.message.completed" && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, "agent.message.completed"); if (Object.hasOwn(event, "confirmationId")) state.confirmationId = event.confirmationId; completeAssistant(event.text || state.assistantText, event.actualModel, event.plainText === true); if (event.operationControl) { state.operationControl = event.operationControl; state.reviewedDigest = event.operationControl.digest; renderPublication(); } return; }
   if (event.type === "task.completed") { state.finishedAt = Date.now(); if (applyTaskEvent(event.taskId, "task.completed")) state.turnActive = false; updateSendAvailability(); return; }

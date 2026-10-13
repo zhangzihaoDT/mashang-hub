@@ -17,5 +17,5 @@ export function executionPolicy(input = {}, env = process.env) {
 }
 export function executionTimes(record, now = Date.now()) {
   if (!record.startedAt) return { remainingMs: null, stalled: false };
-  return { remainingMs: Math.max(0, record.startedAt + record.policy.executionDeadlineMs - now), stalled: now - (record.lastProgressAt || record.startedAt) >= record.policy.progressTimeoutMs };
+  return { remainingMs: Math.max(0, record.startedAt + (record.permissionWaitMs || 0) + record.policy.executionDeadlineMs - (record.permissionStartedAt || now)), stalled: !record.permissionStartedAt && now - (record.lastProgressAt || record.startedAt) >= record.policy.progressTimeoutMs };
 }

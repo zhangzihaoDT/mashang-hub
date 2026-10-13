@@ -25,6 +25,8 @@ const sessions = new Map();
 const tasks = new Map();
 const artifacts = new Map();
 const pendingArtifacts = new Map();
+const pendingPermissions = new Map();
+const permissionReplies = new Map();
 const browserEvents = new Set();
 const authSessions = new Set();
 let activeWorker = null;
@@ -81,6 +83,7 @@ function finalizeTask(task, { event, status, reason, error }) {
     task.status = 'UNCERTAIN'; task.reason = reason || 'EXTERNAL_RESULT_UNVERIFIED'; clearTaskTimers(task); persistTask(task);
     broadcast({ type: 'task.interrupted', taskId: task.taskId, error: '外部操作结果可能不确定，请人工核对；不要自动重试。' }); return true;
   }
+  for (const [id, item] of pendingPermissions) if (item.taskId === task.taskId) { pendingPermissions.delete(id); broadcast({ type: 'permission.resolved', requestId: id, taskId: task.taskId }); }
   task.status = status;
   task.updatedAt = Date.now();
   clearTaskTimers(task);
@@ -127,11 +130,11 @@ function onControlSoftTimeout(control) {
 }
 
 function scheduleWatchdog(task) {
-  if (!task.startedAt || ['INTERRUPTED', 'UNCERTAIN'].includes(task.status)) return;
+  if (!task.startedAt || task.permissionStartedAt || ['INTERRUPTED', 'UNCERTAIN'].includes(task.status)) return;
   clearTimeout(task.timers.soft);
   const config = { ...timeoutConfig(), requestMs: task.policy.executionDeadlineMs };
-  task.softDeadline = task.startedAt + config.requestMs;
-  task.hardDeadline = task.startedAt + config.requestMs + config.graceMs;
+  task.softDeadline = task.startedAt + (task.permissionWaitMs || 0) + config.requestMs;
+  task.hardDeadline = task.softDeadline + config.graceMs;
   task.timers.soft = setTimeout(() => onSoftTimeout(task), Math.max(0, task.softDeadline - Date.now()));
 }
 
@@ -207,6 +210,37 @@ function onWorkerMessage(message) {
     const worker = workers.get(message.workerId);
     if (worker) Object.assign(worker, { status: message.status || "ONLINE", lastHeartbeat: Date.now() });
     workerStatus(message.status || "ONLINE", { workerId: message.workerId });
+    return;
+  }
+  if (message.type === 'permission.requested') {
+    const task = tasks.get(message.taskId);
+    if (!task || isTerminal(task.status) || task.cancelRequested || !message.requestId) return;
+    pendingPermissions.set(message.requestId, { ...message, sessionId: task.sessionId });
+    task.permissionStartedAt ||= Date.now();
+    clearTimeout(task.timers.soft);
+    persistTask(task);
+    broadcast({ ...message, sessionId: task.sessionId });
+    return;
+  }
+  if (message.type === 'permission.resolved') {
+    const item = pendingPermissions.get(message.requestId);
+    if (!message.requestId) {
+      for (const [id, pending] of pendingPermissions) if (pending.taskId === message.taskId) onWorkerMessage({ ...message, requestId: id });
+    }
+    pendingPermissions.delete(message.requestId);
+    const task = tasks.get(item?.taskId || message.taskId);
+    if (task?.permissionStartedAt && ![...pendingPermissions.values()].some(p => p.taskId === task.taskId)) {
+      task.permissionWaitMs = (task.permissionWaitMs || 0) + (task.permissionStartedAt ? Date.now() - task.permissionStartedAt : 0);
+      task.permissionStartedAt = null; task.lastProgressAt = Date.now();
+      persistTask(task);
+      if (!isTerminal(task.status) && !task.cancelRequested) scheduleWatchdog(task);
+    }
+    broadcast(message);
+    return;
+  }
+  if (message.type === 'permission.reply.result') {
+    const pending = permissionReplies.get(message.replyId);
+    if (pending && pending.requestId === message.requestId) { permissionReplies.delete(message.replyId); pending.resolve(message); }
     return;
   }
   if (message.type === "artifact.created") {
@@ -519,10 +553,11 @@ const server = createServer(async (req, res) => {
   }
   const controlGet = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)$/);
   if (controlGet && req.method === "GET") { const control = controls.get(controlGet[1]); return control ? json(res, 200, publicControl(control)) : json(res, 404, { error: "Control not found" }); }
+  if (url.pathname === '/api/permissions' && req.method === 'GET') return json(res, 200, [...pendingPermissions.values()]);
   if (url.pathname === "/api/models") return json(res, 200, { models: activeWorker?.models || [] });
   if (url.pathname === "/api/workspaces") return json(res, 200, { workspaces: activeWorker?.workspaces || [] });
   if (url.pathname === "/api/events") {
-    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive" }); browserEvents.add(res); res.write(`event: mashang\ndata: ${JSON.stringify({ type: "worker.status", status: activeWorker ? "ONLINE" : "OFFLINE" })}\n\n`); req.on("close", () => browserEvents.delete(res)); return;
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive" }); browserEvents.add(res); res.write(`event: mashang\ndata: ${JSON.stringify({ type: "worker.status", status: activeWorker ? "ONLINE" : "OFFLINE" })}\n\n`); for (const permission of pendingPermissions.values()) res.write(`event: mashang\ndata: ${JSON.stringify(permission)}\n\n`); req.on("close", () => browserEvents.delete(res)); return;
   }
   if (url.pathname === "/api/sessions" && req.method === "GET") return json(res, 200, [...sessions.values()]);
   if (url.pathname === "/api/sessions" && req.method === "POST") return json(res, 200, createHubSession((await body(req)).title));
@@ -578,7 +613,21 @@ const server = createServer(async (req, res) => {
   const artifact = url.pathname.match(/^\/api\/artifacts\/(content|download)$/);
   if (artifact && req.method === "GET") return requestArtifact(req, res, artifact[1] === "download");
   const permission = url.pathname.match(/^\/api\/permissions\/([^/]+)\/reply$/);
-  if (permission && req.method === "POST") { sendWorker({ type: "permission.reply", requestId: permission[1], response: (await body(req)).response }); return json(res, 200, { ok: true }); }
+  if (permission && req.method === "POST") {
+    const requestId = decodeURIComponent(permission[1]);
+    const response = (await body(req)).response;
+    if (!['once', 'always', 'reject'].includes(response)) return json(res, 400, { error: 'Invalid permission decision' });
+    if (!pendingPermissions.has(requestId)) return json(res, 409, { error: '审批请求已失效，请刷新后重试' });
+    const replyId = randomUUID();
+    const result = await new Promise(resolve => {
+      const timer = setTimeout(() => { permissionReplies.delete(replyId); resolve({ ok: false, error: '审批尚未确认，请重试' }); }, 12000);
+      permissionReplies.set(replyId, { requestId, resolve(value) { clearTimeout(timer); resolve(value); } });
+      if (!sendWorker({ type: 'permission.reply', requestId, replyId, response })) {
+        permissionReplies.delete(replyId); clearTimeout(timer); resolve({ ok: false, offline: true, error: 'Worker 离线，审批未发送，请重试' });
+      }
+    });
+    return json(res, result.ok ? 200 : result.offline ? 503 : 502, { ok: result.ok, error: result.error });
+  }
   return serveStatic(res, url.pathname);
 });
 
@@ -608,7 +657,7 @@ wss.on("connection", (ws) => {
   ws.on("error", () => ws.close());
 });
 setInterval(() => {
-  for (const task of tasks.values()) if (task.status === 'RUNNING' && !task.stallNotified && executionTimes(task).stalled) { task.stallNotified = true; broadcast({ type: 'task.progress.stalled', taskId: task.taskId, error: '执行暂时没有新进度，仍受执行期限监管。' }); }
+  for (const task of tasks.values()) if (task.status === 'RUNNING' && !task.permissionStartedAt && !task.stallNotified && executionTimes(task).stalled) { task.stallNotified = true; broadcast({ type: 'task.progress.stalled', taskId: task.taskId, error: '执行暂时没有新进度，仍受执行期限监管。' }); }
 }, 1000);
 setInterval(() => { for (const [id, worker] of workers) if (Date.now() - worker.lastHeartbeat > Number(process.env.WORKER_TIMEOUT_MS || 35000)) { worker.status = "OFFLINE"; if (activeWorker?.workerId === id) { workerStatus("OFFLINE", { workerId: id }); activeWorker.terminate(); } } }, 10000);
 server.listen(port, host, () => console.log(`mashang-hub control plane listening at http://${host}:${port}`));

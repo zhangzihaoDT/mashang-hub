@@ -225,6 +225,14 @@ Execution budgets are generic, not business-script routing: default `query` task
 
 Cancel is a request, not an immediate verdict. The first valid terminal state wins: if the Worker returns normally before the cancel takes effect, the turn settles `COMPLETED`; otherwise it settles `task.cancelled` / `USER_CANCELLED`.
 
+### OpenCode 工具审批
+
+工具权限请求按 Task 关联显示在对话中，包含操作类型、请求范围和「允许本次并继续 / 始终允许此范围 / 拒绝」。允许一次只批准当前请求；后续请求继续单独展示。按钮提交后等待 Worker 的 OpenCode 确认，失败保留请求并支持重试。浏览器刷新或 SSE 重连从 Hub 恢复待审批请求，Worker 定期对账 OpenCode 的权限列表。
+
+等待工具审批期间暂停 Hub 执行期限和 Worker 安全计时；全部请求处理后按剩余预算继续执行。用户取消仍然有效。该协议需要同时更新 Hub 和 Worker；更新不会自动重放已超时任务或代用户授权。
+
+验证：`npm run test:permissions`；设置 `PERMISSION_BROWSER=1` 可额外验证审批按钮、失败反馈、刷新恢复和移动布局（支持 `PLAYWRIGHT_MODULE` 与 `CHROME_BIN`）。
+
 ## Turn Log
 
 Every turn writes a fixed JSONL record to `HUB_TURN_LOG` (default `~/.mashang-hub/turns.jsonl`) and keeps it in memory. `GET /api/turns/:taskId` returns the record. Logs contain ids, event names, reasons and timings; never prompt text, answers or secrets.
