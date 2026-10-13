@@ -18,15 +18,19 @@ try {
   await until(async () => (await api('/api/health')).status === 200);
   worker = new WebSocket(base.replace('http:', 'ws:') + '/worker', { headers: { Authorization: 'Bearer permission-test' } }); await once(worker, 'open');
   const received = []; worker.on('message', raw => received.push(JSON.parse(raw)));
-  const send = event => worker.send(JSON.stringify(event));
-  send({ type: 'worker.register', workerId: 'permission-worker', status: 'ONLINE', models: [] });
+  let currentTask;
+  const send = event => worker.send(JSON.stringify(event.taskId && currentTask ? { attemptId: currentTask.attemptId, dispatchId: currentTask.dispatchId, ...event } : event));
+  send({ type: 'worker.register', workerId: 'permission-worker', taskProtocolVersion: 1, status: 'ONLINE', models: [] });
   await sleep(40);
   const session = (await api('/api/sessions', { title: 'test' })).data;
   await api(`/api/sessions/${session.id}/message`, { parts: [{ type: 'text', text: 'draw' }], model: { providerID: 'mock', modelID: 'mock' }, policy: { executionDeadlineMs: 500 } });
   const task = await until(() => received.find(p => p.type === 'task.create'));
+  currentTask = task;
   send({ type: 'task.running', taskId: task.taskId });
   send({ type: 'permission.requested', taskId: task.taskId, requestId: 'permission1', request: { sessionID: 'opencode-session', permission: 'external_directory', patterns: ['/styles/*'] } });
   await until(async () => (await api('/api/permissions')).data.length === 1);
+  send({ type: 'permission.requested', taskId: task.taskId, attemptId: 'old-attempt', dispatchId: 'old-dispatch', requestId: 'stale', request: { sessionID: 'opencode-session' } });
+  await sleep(40); assert.equal((await api('/api/permissions')).data.length, 1, 'stale execution identity must be ignored');
   await sleep(700); assert.equal(received.some(p => p.type === 'task.cancel'), false, 'approval waiting must pause execution deadline');
   const pending = (await api('/api/permissions')).data[0]; assert.equal(pending.sessionId, session.id);
   // A new SSE connection must receive pending approvals.
@@ -48,7 +52,7 @@ try {
     await page.locator('[data-choice="once"]').click();
     const click = await until(() => received.find(p => p.type === 'permission.reply'));
     assert.equal(await page.locator('[data-choice="once"]').isDisabled(), true);
-    send({ type: 'permission.reply.result', requestId: 'permission1', replyId: click.replyId, ok: false, error: 'mock failure' });
+    send({ type: 'permission.reply.result', taskId: task.taskId, requestId: 'permission1', replyId: click.replyId, ok: false, error: 'mock failure' });
     await page.waitForFunction(() => document.querySelector('.tool-permission')?.textContent.includes('审批未完成'));
     assert.equal(await page.locator('[data-choice="once"]').isEnabled(), true);
     await page.reload(); await page.waitForSelector('[data-choice="once"]');
@@ -64,12 +68,15 @@ try {
   const reply = api('/api/permissions/permission1/reply', { response: 'once' }).then(value => { complete = true; return value; });
   const command = await until(() => received.find(p => p.type === 'permission.reply'));
   await sleep(60); assert.equal(complete, false, 'must wait for executor acknowledgement');
-  send({ type: 'permission.reply.result', requestId: 'permission1', replyId: command.replyId, ok: false, error: 'retry' });
+  assert.equal(command.taskId, task.taskId); assert.equal(command.attemptId, task.attemptId); assert.equal(command.dispatchId, task.dispatchId);
+  send({ type: 'permission.reply.result', taskId: task.taskId, attemptId: 'old-attempt', dispatchId: 'old-dispatch', requestId: 'permission1', replyId: command.replyId, ok: true });
+  await sleep(40); assert.equal(complete, false, 'late acknowledgement from another execution must not settle approval');
+  send({ type: 'permission.reply.result', taskId: task.taskId, requestId: 'permission1', replyId: command.replyId, ok: false, error: 'retry' });
   assert.equal((await reply).status, 502); assert.equal((await api('/api/permissions')).data.length, 1);
   const retry = api('/api/permissions/permission1/reply', { response: 'once' });
   const second = await until(() => received.filter(p => p.type === 'permission.reply')[1]);
   send({ type: 'permission.resolved', requestId: 'permission1', taskId: task.taskId });
-  send({ type: 'permission.reply.result', requestId: 'permission1', replyId: second.replyId, ok: true });
+  send({ type: 'permission.reply.result', taskId: task.taskId, requestId: 'permission1', replyId: second.replyId, ok: true });
   assert.equal((await retry).status, 200); assert.equal((await api('/api/permissions')).data.length, 0);
   await until(() => received.some(p => p.type === 'task.cancel')); // Remaining budget resumes.
   assert.equal((await api('/api/permissions/permission1/reply', { response: 'once' })).status, 409);

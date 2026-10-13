@@ -227,7 +227,7 @@ Cancel is a request, not an immediate verdict. The first valid terminal state wi
 
 ### OpenCode 工具审批
 
-工具权限请求按 Task 关联显示在对话中，包含操作类型、请求范围和「允许本次并继续 / 始终允许此范围 / 拒绝」。允许一次只批准当前请求；后续请求继续单独展示。按钮提交后等待 Worker 的 OpenCode 确认，失败保留请求并支持重试。浏览器刷新或 SSE 重连从 Hub 恢复待审批请求，Worker 定期对账 OpenCode 的权限列表。
+Worker 核对权限请求的 assistant 消息归属和工具调用状态，仅将当前用户消息的有效请求按 Task / attempt / dispatch 关联显示在对话中，包含操作类型、请求范围和「允许本次并继续 / 始终允许此范围 / 拒绝」。允许一次只批准当前请求；后续请求继续单独展示。按钮提交后等待 Worker 对账确认 OpenCode 请求已消失且工具继续运行或结束，失败保留请求并支持重试。浏览器刷新或 SSE 重连从 Hub 恢复待审批请求，Worker 定期对账 OpenCode 的权限列表。
 
 等待工具审批期间暂停 Hub 执行期限和 Worker 安全计时；全部请求处理后按剩余预算继续执行。用户取消仍然有效。该协议需要同时更新 Hub 和 Worker；更新不会自动重放已超时任务或代用户授权。
 

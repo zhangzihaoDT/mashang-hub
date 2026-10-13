@@ -224,6 +224,7 @@ function onWorkerMessage(message) {
   }
   if (message.type === 'permission.resolved') {
     const item = pendingPermissions.get(message.requestId);
+    if (item && ['taskId', 'attemptId', 'dispatchId'].some(key => item[key] !== message[key])) return;
     if (!message.requestId) {
       for (const [id, pending] of pendingPermissions) if (pending.taskId === message.taskId) onWorkerMessage({ ...message, requestId: id });
     }
@@ -240,7 +241,7 @@ function onWorkerMessage(message) {
   }
   if (message.type === 'permission.reply.result') {
     const pending = permissionReplies.get(message.replyId);
-    if (pending && pending.requestId === message.requestId) { permissionReplies.delete(message.replyId); pending.resolve(message); }
+    if (pending && pending.requestId === message.requestId && ['taskId', 'attemptId', 'dispatchId'].every(key => pending[key] === message[key])) { permissionReplies.delete(message.replyId); pending.resolve(message); }
     return;
   }
   if (message.type === "artifact.created") {
@@ -617,12 +618,14 @@ const server = createServer(async (req, res) => {
     const requestId = decodeURIComponent(permission[1]);
     const response = (await body(req)).response;
     if (!['once', 'always', 'reject'].includes(response)) return json(res, 400, { error: 'Invalid permission decision' });
-    if (!pendingPermissions.has(requestId)) return json(res, 409, { error: '审批请求已失效，请刷新后重试' });
+    const item = pendingPermissions.get(requestId);
+    const task = tasks.get(item?.taskId);
+    if (!item || !task || isTerminal(task.status) || task.cancelRequested || ['attemptId', 'dispatchId'].some(key => item[key] !== task[key])) return json(res, 409, { error: '审批请求已失效，请刷新后重试' });
     const replyId = randomUUID();
     const result = await new Promise(resolve => {
       const timer = setTimeout(() => { permissionReplies.delete(replyId); resolve({ ok: false, error: '审批尚未确认，请重试' }); }, 12000);
-      permissionReplies.set(replyId, { requestId, resolve(value) { clearTimeout(timer); resolve(value); } });
-      if (!sendWorker({ type: 'permission.reply', requestId, replyId, response })) {
+      permissionReplies.set(replyId, { requestId, taskId: item.taskId, attemptId: item.attemptId, dispatchId: item.dispatchId, resolve(value) { clearTimeout(timer); resolve(value); } });
+      if (!sendWorker({ type: 'permission.reply', requestId, replyId, response, taskId: item.taskId, attemptId: item.attemptId, dispatchId: item.dispatchId })) {
         permissionReplies.delete(replyId); clearTimeout(timer); resolve({ ok: false, offline: true, error: 'Worker 离线，审批未发送，请重试' });
       }
     });
