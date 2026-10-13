@@ -9,7 +9,7 @@ const permissions = new Permissions({ send: p => events.push(p), taskForSession:
   request: async (path, options) => {
     if (fail) throw Error('offline');
     if (path === '/permission') return [...requests.values()];
-    if (path.endsWith('/reply')) { if (delayed) await delayed; if (removeOnReply) requests.delete(decodeURIComponent(path.split('/')[2])); return true; }
+    if (path.endsWith('/reply')) { assert.deepEqual(JSON.parse(options.body), { reply: 'once' }, 'OpenCode requires reply, not the Hub response field'); if (delayed) await delayed; if (removeOnReply) requests.delete(decodeURIComponent(path.split('/')[2])); return true; }
     return messages.get(decodeURIComponent(path.split('/').at(-1)));
   },
 });

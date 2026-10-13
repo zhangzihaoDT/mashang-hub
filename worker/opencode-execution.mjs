@@ -27,9 +27,10 @@ export async function requestExecutionCancel(api, record) {
   } finally { record.abortPending = false; }
 }
 
-export async function waitForExecution(api, record, { onUnverified = () => {}, onEvidence = () => {}, intervalMs = 1000 } = {}) {
+export async function waitForExecution(api, record, { onUnverified = () => {}, onEvidence = () => {}, intervalMs = 1000, recovering = false } = {}) {
   let notified = false;
   while (!record.settled) {
+    let unverified = true;
     try {
       if (record.source && !record.abortAcknowledged) {
         await requestExecutionCancel(api, record).catch(() => {});
@@ -37,8 +38,9 @@ export async function waitForExecution(api, record, { onUnverified = () => {}, o
       }
       const evidence = await inspectExecution(api, record);
       if (['COMPLETED', 'CANCELLED', 'FAILED'].includes(evidence.state)) return evidence;
+      unverified = !recovering || evidence.state !== 'RUNNING';
     } catch { /* Keep the mapping until execution evidence can be read. */ }
-    if (!notified) { notified = true; onUnverified(); }
+    if (unverified && !notified) { notified = true; onUnverified(); }
     await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
 }

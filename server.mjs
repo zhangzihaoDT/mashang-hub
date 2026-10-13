@@ -129,6 +129,11 @@ function onControlSoftTimeout(control) {
   control.timers.hard = setTimeout(() => { if (!isTerminalControl(control.status)) { control.status = control.snapshotRef ? "UNKNOWN" : "INTERRUPTED"; control.reason = "CANCEL_UNVERIFIED"; clearControlTimers(control); persistControl(control); broadcastControl(control); } }, control.graceTimeoutMs ?? controlTimeoutConfig().graceMs);
 }
 
+function restorePermissionClock(task, evidence) {
+  if (Number.isFinite(evidence.permissionWaitMs) && evidence.permissionWaitMs >= 0) task.permissionWaitMs = Math.max(task.permissionWaitMs || 0, evidence.permissionWaitMs);
+  if (evidence.permissionStartedAt === null) task.permissionStartedAt = null;
+  else if (Number.isFinite(evidence.permissionStartedAt) && evidence.permissionStartedAt >= (task.startedAt || task.createdAt) && evidence.permissionStartedAt <= Date.now()) task.permissionStartedAt = evidence.permissionStartedAt;
+}
 function scheduleWatchdog(task) {
   if (!task.startedAt || task.permissionStartedAt || ['INTERRUPTED', 'UNCERTAIN'].includes(task.status)) return;
   clearTimeout(task.timers.soft);
@@ -168,7 +173,7 @@ function workerModelsMessage(message) {
   workerStatus(worker.status, { workerId: message.workerId, models: activeWorker.models });
   sendWorker({ type: "worker.registered", workerId: message.workerId });
   const pending = taskStore.list().filter(record => record.workerId === message.workerId && ['UNKNOWN', 'DISPATCHED', 'RUNNING', 'INTERRUPTED', 'UNCERTAIN'].includes(record.status));
-  if (pending.length) sendWorker({ type: 'worker.reconcile.request', tasks: pending.map(({ taskId, attemptId, dispatchId }) => ({ taskId, attemptId, dispatchId })) });
+  if (pending.length) sendWorker({ type: 'worker.reconcile.request', tasks: pending.map(({ taskId, attemptId, dispatchId, policy }) => ({ taskId, attemptId, dispatchId, policy })) });
 }
 
 function onWorkerMessage(message) {
@@ -181,7 +186,7 @@ function onWorkerMessage(message) {
       if (!local) continue;
       if (evidence.state === 'RUNNING' && !['UNKNOWN', 'UNCERTAIN'].includes(record.status)) {
         local.status = 'RUNNING'; local.startedAt ||= record.startedAt || Date.now(); local.lastProgressAt ||= record.lastProgressAt || local.startedAt;
-        if (record.source === 'conversation') { persistTask(local); scheduleWatchdog(local); broadcast({ type: 'task.resumed', taskId: record.taskId }); }
+        if (record.source === 'conversation') { restorePermissionClock(local, evidence); persistTask(local); scheduleWatchdog(local); broadcast({ type: 'task.resumed', taskId: record.taskId }); }
         else { persistControl(local); scheduleControlWatchdog(local); broadcastControl(local); }
         if (local.cancelRequested) sendWorker(record.source === 'conversation' ? { type: 'task.cancel', taskId: record.taskId, source: local.cancelSource || 'user' } : { type: 'runtime.control.cancel', controlId: record.taskId, source: local.cancelSource || 'user' });
       } else if (evidence.state === 'RESULT' && Array.isArray(evidence.events)) {
@@ -217,6 +222,7 @@ function onWorkerMessage(message) {
     if (!task || isTerminal(task.status) || task.cancelRequested || !message.requestId) return;
     pendingPermissions.set(message.requestId, { ...message, sessionId: task.sessionId });
     task.permissionStartedAt ||= Date.now();
+    restorePermissionClock(task, message);
     clearTimeout(task.timers.soft);
     persistTask(task);
     broadcast({ ...message, sessionId: task.sessionId });
@@ -230,10 +236,10 @@ function onWorkerMessage(message) {
     }
     pendingPermissions.delete(message.requestId);
     const task = tasks.get(item?.taskId || message.taskId);
-    if (task?.permissionStartedAt && ![...pendingPermissions.values()].some(p => p.taskId === task.taskId)) {
-      task.permissionWaitMs = (task.permissionWaitMs || 0) + (task.permissionStartedAt ? Date.now() - task.permissionStartedAt : 0);
-      task.permissionStartedAt = null; task.lastProgressAt = Date.now();
-      persistTask(task);
+    if (task && ![...pendingPermissions.values()].some(p => p.taskId === task.taskId)) {
+      if (Number.isFinite(message.permissionWaitMs)) restorePermissionClock(task, message);
+      else { task.permissionWaitMs = (task.permissionWaitMs || 0) + (task.permissionStartedAt ? Date.now() - task.permissionStartedAt : 0); task.permissionStartedAt = null; }
+      task.lastProgressAt = Date.now(); persistTask(task);
       if (!isTerminal(task.status) && !task.cancelRequested) scheduleWatchdog(task);
     }
     broadcast(message);
@@ -245,10 +251,11 @@ function onWorkerMessage(message) {
     return;
   }
   if (message.type === "artifact.created") {
+    const existed = artifacts.has(message.artifactId);
     artifacts.set(message.artifactId, message);
     const task = tasks.get(message.taskId);
     if (task) {
-      task.artifactCount += 1;
+      if (!existed) task.artifactCount = [...artifacts.values()].filter(a => a.taskId === task.taskId).length;
       if (!isTerminal(task.status)) appendEvent(task.taskId, { event: "artifact.created", value: message.artifactId });
       if (task.pendingCompletion && task.attemptCompletion) task.attemptCompletion();
     }
@@ -445,7 +452,7 @@ const server = createServer(async (req, res) => {
     return json(res, 200, { authenticated: true }, { "set-cookie": `hub_session=${session}; HttpOnly; SameSite=Lax; Path=/;${secure ? " Secure;" : ""}` });
   }
   if (url.pathname.startsWith("/api/") && !requireAuth(req, res)) return;
-  if (url.pathname === "/api/health") return json(res, 200, { connected: Boolean(activeWorker), worker: activeWorker ? { id: activeWorker.workerId, status: workers.get(activeWorker.workerId)?.status || "CONNECTING" } : null });
+  if (url.pathname === "/api/health") return json(res, 200, { connected: Boolean(activeWorker?.workerId), worker: activeWorker ? { id: activeWorker.workerId, status: workers.get(activeWorker.workerId)?.status || "CONNECTING" } : null });
   if (url.pathname === "/api/worker") return json(res, 200, { worker: activeWorker ? { id: activeWorker.workerId, status: workers.get(activeWorker.workerId)?.status || "CONNECTING" } : null });
   if (url.pathname === "/api/runtime") return json(res, 200, { workerOnline: Boolean(activeWorker), receivedAt: runtimeReceivedAt, snapshot: runtimeSnapshot });
   if (url.pathname === "/api/runtime/control" && req.method === "POST") {
@@ -461,7 +468,7 @@ const server = createServer(async (req, res) => {
     if (!validTarget) return json(res, 404, { error: "Unknown runtime target", reason: "UNKNOWN_TARGET" });
     if (operationTarget?.requiresSnapshot) return json(res, 409, { error: "Operation requires a Worker snapshot preview" });
     if (op === "run" && operationTarget && !operationTarget.enabled) return json(res, 409, { error: "Operation is disabled", reason: "OPERATION_DISABLED" });
-    if (!activeWorker || activeWorker.readyState !== 1) return json(res, 503, { error: "Mac Worker is offline" });
+    if (!activeWorker?.workerId || activeWorker.readyState !== 1) return json(res, 503, { error: "Mac Worker is offline or registering" });
     const control = {
       controlId: `control_${randomUUID()}`,
       op,
@@ -555,10 +562,12 @@ const server = createServer(async (req, res) => {
   const controlGet = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)$/);
   if (controlGet && req.method === "GET") { const control = controls.get(controlGet[1]); return control ? json(res, 200, publicControl(control)) : json(res, 404, { error: "Control not found" }); }
   if (url.pathname === '/api/permissions' && req.method === 'GET') return json(res, 200, [...pendingPermissions.values()]);
+  const taskArtifacts = url.pathname.match(/^\/api\/tasks\/([^/]+)\/artifacts$/);
+  if (taskArtifacts && req.method === 'GET') return json(res, 200, [...artifacts.values()].filter(a => a.taskId === taskArtifacts[1]));
   if (url.pathname === "/api/models") return json(res, 200, { models: activeWorker?.models || [] });
   if (url.pathname === "/api/workspaces") return json(res, 200, { workspaces: activeWorker?.workspaces || [] });
   if (url.pathname === "/api/events") {
-    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive" }); browserEvents.add(res); res.write(`event: mashang\ndata: ${JSON.stringify({ type: "worker.status", status: activeWorker ? "ONLINE" : "OFFLINE" })}\n\n`); for (const permission of pendingPermissions.values()) res.write(`event: mashang\ndata: ${JSON.stringify(permission)}\n\n`); req.on("close", () => browserEvents.delete(res)); return;
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive" }); browserEvents.add(res); res.write(`event: mashang\ndata: ${JSON.stringify({ type: "worker.status", status: activeWorker ? "ONLINE" : "OFFLINE" })}\n\n`); for (const artifact of artifacts.values()) res.write(`event: mashang\ndata: ${JSON.stringify(artifact)}\n\n`); for (const permission of pendingPermissions.values()) res.write(`event: mashang\ndata: ${JSON.stringify(permission)}\n\n`); req.on("close", () => browserEvents.delete(res)); return;
   }
   if (url.pathname === "/api/sessions" && req.method === "GET") return json(res, 200, [...sessions.values()]);
   if (url.pathname === "/api/sessions" && req.method === "POST") return json(res, 200, createHubSession((await body(req)).title));
@@ -569,7 +578,7 @@ const server = createServer(async (req, res) => {
     console.log(`task request received: session=${message[1]} worker=${activeWorker?.workerId || "none"}`);
     const session = sessions.get(message[1]);
     if (!session) return json(res, 404, { error: "Hub Session not found" });
-    if (!activeWorker || activeWorker.readyState !== 1) return json(res, 503, { error: "Mac Worker is offline" });
+    if (!activeWorker?.workerId || activeWorker.readyState !== 1) return json(res, 503, { error: "Mac Worker is offline or registering" });
     const input = await body(req);
     const rawWorkspace = input.workspaceId;
     const workspaceId = rawWorkspace == null || rawWorkspace === "" ? null : sanitizeWorkspaceId(rawWorkspace);

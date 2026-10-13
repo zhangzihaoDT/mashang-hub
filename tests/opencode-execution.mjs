@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { inspectExecution, requestExecutionCancel } from '../worker/opencode-execution.mjs';
+import { inspectExecution, requestExecutionCancel, waitForExecution } from '../worker/opencode-execution.mjs';
 const record = { openCodeSessionId: 's', userMessageId: 'current', directory: '/mock', requestStarted: true };
 let status = { s: { type: 'busy' } }, messages = [{ info: { id: 'current', role: 'user' } }], abort = false;
 const api = async path => path === '/session/status' ? status : path.endsWith('/abort') ? abort : messages;
@@ -17,3 +17,10 @@ assert.equal((await inspectExecution(api, record)).state, 'COMPLETED', 'complete
 messages = [];
 assert.equal((await inspectExecution(api, record)).state, 'UNKNOWN', 'an unobserved user message must not be cancelled or completed');
 console.log('Execution evidence, abort acknowledgement and turn-specific result matching passed');
+
+let polls = 0, warnings = 0;
+const recovered = { openCodeSessionId: 's', userMessageId: 'current', directory: '/mock' };
+const recoveryApi = async path => path === '/session/status' ? {s:{type:'busy'}} : ++polls === 1 ? [{info:{id:'current',role:'user'}}] : [{info:{id:'current',role:'user'}},{info:{role:'assistant',parentID:'current',finish:'stop',time:{completed:1}},parts:[]}];
+assert.equal((await waitForExecution(recoveryApi, recovered, { recovering:true, intervalMs:1, onUnverified:()=>warnings++ })).state, 'COMPLETED');
+assert.equal(warnings, 0, 'confirmed busy execution must not be reported as interrupted after restart');
+console.log('Verified running recovery remains active without an interruption event');

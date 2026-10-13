@@ -229,7 +229,7 @@ Cancel is a request, not an immediate verdict. The first valid terminal state wi
 
 Worker 核对权限请求的 assistant 消息归属和工具调用状态，仅将当前用户消息的有效请求按 Task / attempt / dispatch 关联显示在对话中，包含操作类型、请求范围和「允许本次并继续 / 始终允许此范围 / 拒绝」。允许一次只批准当前请求；后续请求继续单独展示。按钮提交后等待 Worker 对账确认 OpenCode 请求已消失且工具继续运行或结束，失败保留请求并支持重试。浏览器刷新或 SSE 重连从 Hub 恢复待审批请求，Worker 定期对账 OpenCode 的权限列表。
 
-等待工具审批期间暂停 Hub 执行期限和 Worker 安全计时；全部请求处理后按剩余预算继续执行。用户取消仍然有效。该协议需要同时更新 Hub 和 Worker；更新不会自动重放已超时任务或代用户授权。
+等待工具审批期间暂停 Hub 执行期限和 Worker 安全计时；执行预算、累计等待时间和当前等待起点持久化到 Worker journal，重连先恢复计时证据再启动 watchdog。全部请求处理后按剩余预算继续执行。用户取消仍然有效。该协议需要同时更新 Hub 和 Worker；更新不会自动重放已超时任务或代用户授权。
 
 验证：`npm run test:permissions`；设置 `PERMISSION_BROWSER=1` 可额外验证审批按钮、失败反馈、刷新恢复和移动布局（支持 `PLAYWRIGHT_MODULE` 与 `CHROME_BIN`）。
 
@@ -285,6 +285,10 @@ The Worker sends the model to OpenCode as `model: { providerID, modelID }` for t
 ## Artifacts
 
 Worker validates and announces `.md`, `.html`, `.csv`, and `.png` files under the output roots as opaque Artifact IDs. Hub requests content from Worker only after a user Preview or Download action. The browser never receives the local absolute path.
+
+成功工具调用生成的受限输出文件会提前注册为 Task 附件，不依赖最终回答。超时、失败或取消不改变文件存在的事实：对话保留「已生成的部分产物 · 任务未完成」及预览/下载，任务终态保持真实。Worker journal 保存 Artifact 元数据及内容摘要；重启时重新校验文件，不重跑任务。已有失败任务仅根据当前轮成功工具记录与文件生成时间恢复产物，不将旧文件或 dataset 注册为附件。文件被改写且摘要不匹配时拒绝读取。
+
+运行 `npm run test:recovery-artifacts` 验证审批期间双端重启、超时 HTML 和再次重启后的下载。设置 `RECOVERY_BROWSER=1` 可追加浏览器刷新、预览及移动端验证（支持 `PLAYWRIGHT_MODULE`、`CHROME_BIN`）。
 
 ## Docker / Sealos
 
@@ -342,7 +346,7 @@ Worker 也支持 `MASHANG_PUBLISH_DIRECT=1` 在进程内直接复用现有 masha
 
 Worker 将执行 claim 和结果 outbox 持久化到 `WORKER_EXECUTION_JOURNAL`（默认 `<WORKER_STATE_FILE>.executions.json`）。重连按 taskId / attemptId / dispatchId 对账，仅本 Worker 进程内真实活跃的执行可恢复 RUNNING；历史 RUNNING 文件不是存活证明。已完成结果可回传，但不重新执行。Worker 重启且无法验证执行时保持 INTERRUPTED，可能存在外部副作用时保持 UNCERTAIN。UNCERTAIN 不自动重试。
 
-更新 Hub 与 Worker 后才能获得完整恢复语义；旧 Worker 保持兼容但无法提供可信对账。Hub 数据库和 Worker journal 均需持久化、定期备份；损坏 journal 会拒绝启动。当前 Worker journal 包含本地结果正文且无自动清理，需保持目录私有。Artifact 下载注册表仍只在 Worker 内存，重启后的历史文件下载尚未恢复。
+更新 Hub 与 Worker 后才能获得完整恢复语义；旧 Worker 保持兼容但无法提供可信对账。Hub 数据库和 Worker journal 均需持久化、定期备份；损坏 journal 会拒绝启动。当前 Worker journal 包含本地结果正文且无自动清理，需保持目录私有。Artifact 元数据与摘要保存在 Worker journal，重启后通过原输出目录重新校验和注册。
 
 `npm run test:long-task` 使用真实 Hub/Worker 进程和 Mock OpenCode，持续 185 秒并在期间重启 Hub，验证原执行身份与单次调用。当前完成的是 Agent 长任务与恢复纵向场景；通用排队、后台任务列表和 External Action 正式接入仍待后续验收。
 

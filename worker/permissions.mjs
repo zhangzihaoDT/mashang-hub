@@ -25,7 +25,7 @@ export class Permissions {
       if (this.retired.has(permission.id) || !tool || !['pending', 'running'].includes(tool.state?.status) || !identityMatches(owner, this.taskForSession(permission.sessionID))) return;
       const item = { type: 'permission.requested', requestId: permission.id, taskId: owner.taskId, attemptId: owner.attemptId, dispatchId: owner.dispatchId, request: permission, owner };
       this.pending.set(permission.id, item);
-      this.pause(owner.taskId);
+      this.pause(owner.taskId, tool.state.time?.start);
       const { owner: _, ...publicItem } = item;
       this.send(publicItem);
     } catch { /* No ownership evidence: retry during synchronization. */ }
@@ -50,7 +50,7 @@ export class Permissions {
       const tool = await this.inspect(item.request, item.owner);
       if (!tool || !['pending', 'running'].includes(tool.state?.status) || !identityMatches(item.owner, this.taskForSession(item.request.sessionID))) throw Error('stale');
       await this.request(`/permission/${encodeURIComponent(message.requestId)}/reply`, {
-        method: 'POST', directory: item.owner.directory, body: JSON.stringify({ response: message.response }), signal: AbortSignal.timeout(5000),
+        method: 'POST', directory: item.owner.directory, body: JSON.stringify({ reply: message.response }), signal: AbortSignal.timeout(5000),
       });
       // HTTP success alone is not evidence that the waiting request was removed.
       const requests = await this.request('/permission', { directory: item.owner.directory, signal: AbortSignal.timeout(5000) });

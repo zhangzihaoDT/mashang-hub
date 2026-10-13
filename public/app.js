@@ -194,7 +194,7 @@ function renderArtifacts() {
   if (!state.artifacts.length) { if (box) { box.classList.add("hidden"); box.innerHTML = ""; } return; }
   box = box || ensureArtifactMount();
   box.classList.remove("hidden");
-  box.innerHTML = `<div class="artifacts-title"><span>任务附件</span><small>${state.artifacts.length} 个文件</small></div>${state.artifacts.map((artifact, index) => `<div class="artifact-card" data-index="${index}"><div class="artifact-icon artifact-${artifact.extension.slice(1)}">${artifact.extension.slice(1).toUpperCase()}</div><div class="artifact-info"><strong>${escapeHTML(artifact.name)}</strong><span>${escapeHTML(artifact.artifactType || ({".md":"Markdown",".html":"HTML",".csv":"CSV",".png":"图片"})[artifact.extension] || "附件")} · ${formatBytes(artifact.size)}</span><small title="${escapeHTML(artifact.path || artifact.name)}">${escapeHTML(artifact.path || "Local artifact")}</small></div><div class="artifact-actions">${artifact.extension === ".csv" ? "" : `<button data-action="preview">预览</button>`}<a class="artifact-download" href="${artifactURL("/api/artifacts/download", artifact.artifactId)}" download>下载</a></div>${artifact.preview ? `<div class="artifact-preview">${artifact.preview}</div>` : ""}</div>`).join("")}`;
+  box.innerHTML = `<div class="artifacts-title"><span>${isTerminalState() && state.taskState !== 'COMPLETED' ? '已生成的部分产物 · 任务未完成' : '任务附件'}</span><small>${state.artifacts.length} 个文件</small></div>${state.artifacts.map((artifact, index) => `<div class="artifact-card" data-index="${index}"><div class="artifact-icon artifact-${artifact.extension.slice(1)}">${artifact.extension.slice(1).toUpperCase()}</div><div class="artifact-info"><strong>${escapeHTML(artifact.name)}</strong><span>${escapeHTML(artifact.artifactType || ({".md":"Markdown",".html":"HTML",".csv":"CSV",".png":"图片"})[artifact.extension] || "附件")} · ${formatBytes(artifact.size)}</span><small title="${escapeHTML(artifact.path || artifact.name)}">${escapeHTML(artifact.path || "Local artifact")}</small></div><div class="artifact-actions">${artifact.extension === ".csv" ? "" : `<button data-action="preview">预览</button>`}<a class="artifact-download" href="${artifactURL("/api/artifacts/download", artifact.artifactId)}" download>下载</a></div>${artifact.preview ? `<div class="artifact-preview">${artifact.preview}</div>` : ""}</div>`).join("")}`;
 }
 async function discoverArtifacts(text) { const candidates = [...new Set(artifactCandidates(text))]; state.artifacts = (await Promise.all(candidates.map(async (path) => { try { const response = await fetch(artifactURL("/api/artifacts/metadata", path)); if (!response.ok) return null; return await response.json(); } catch { return null; } }))).filter(Boolean).map((artifact) => ({ ...artifact, preview: "" })); renderArtifacts(); }
 async function previewArtifact(card, artifact) {
@@ -276,7 +276,7 @@ async function restoreSession(context) {
   if (!context.session) context.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "mashang-hub" }) });
   localStorage.setItem(sessionStorageKey(context), context.session.id);
   if (state === context) { renderSession(); renderDebug(); }
-  const latest = (await api('/api/tasks')).find(task => task.source === 'conversation' && task.conversationId === context.session.id && ['DISPATCHED', 'RUNNING', 'INTERRUPTED', 'UNCERTAIN'].includes(task.status));
+  const latest = (await api('/api/tasks')).find(task => task.source === 'conversation' && task.conversationId === context.session.id );
   if (context === conversations.publish) {
     const controls = await api('/api/runtime/controls');
     const control = controls.filter(item => item.snapshotRef && item.conversationId === context.session.id).sort((a,b)=>b.createdAt-a.createdAt)[0];
@@ -289,7 +289,17 @@ async function restoreSession(context) {
       if (state === context) renderConversation();
     }
   }
-  if (latest && !context.activeTaskId) { context.activeTaskId = latest.taskId; context.turnId = latest.turnId; context.taskState = latest.status === 'DISPATCHED' ? 'SUBMITTING' : latest.status === 'UNCERTAIN' ? 'INTERRUPTED' : latest.status; context.turnActive = latest.status === 'RUNNING' || latest.status === 'DISPATCHED'; if (state === context) setStatus(context.taskState, latest.status === 'UNCERTAIN' ? '结果待核对，禁止自动重试' : latest.status === 'INTERRUPTED' ? '等待 Worker 执行对账' : '已恢复任务状态'); updateCancelVisibility(); }
+  if (latest && !context.activeTaskId) {
+    context.activeTaskId = latest.taskId; context.turnId = latest.turnId;
+    context.taskState = latest.legacyStatus === 'TIMEOUT' ? 'TIMEOUT' : latest.status === 'DISPATCHED' ? 'SUBMITTING' : latest.status === 'UNCERTAIN' ? 'INTERRUPTED' : latest.status;
+    context.turnActive = ['RUNNING', 'DISPATCHED'].includes(latest.status);
+    context.startedAt = latest.startedAt; context.finishedAt = latest.finishedAt;
+    const label = latest.status === 'UNCERTAIN' ? '结果待核对，禁止自动重试' : latest.status === 'INTERRUPTED' ? '等待 Worker 执行对账' : context.turnActive ? '正在核对任务执行状态' : taskLabel(context.taskState);
+    if (!context.messages.length) context.messages.push({ role:'assistant', kind:'process', steps:[{label, status:processStepStatus(context.taskState)}] });
+    if (state === context) { setStatus(context.taskState, label); renderMessages(); }
+    updateCancelVisibility();
+  }
+  if (latest) { context.artifacts = (await api(`/api/tasks/${encodeURIComponent(latest.taskId)}/artifacts`)).map(a => ({...a, preview:''})); if (state === context) renderArtifacts(); }
   for (const permission of await api('/api/permissions')) if (permission.taskId === context.activeTaskId) handleServerEvent(permission);
 }
 function parseMessage(data) { return (data?.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n"); }

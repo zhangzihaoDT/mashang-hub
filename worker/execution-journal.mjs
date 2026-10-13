@@ -20,7 +20,7 @@ export class ExecutionJournal {
   begin(message) {
     const id = message.taskId || message.controlId;
     if (this.entries[id]) return false;
-    this.entries[id] = { taskId: id, attemptId: message.attemptId || null, dispatchId: message.dispatchId || null, status: 'RUNNING', startedAt: Date.now(), lastProgressAt: Date.now(), sessionId: message.sessionId || null, executor: message.controlId ? 'operation' : 'agent', events: [] };
+    this.entries[id] = { taskId: id, attemptId: message.attemptId || null, dispatchId: message.dispatchId || null, status: 'RUNNING', startedAt: Date.now(), lastProgressAt: Date.now(), sessionId: message.sessionId || null, executor: message.controlId ? 'operation' : 'agent', policy: message.policy || null, permissionWaitMs: 0, permissionStartedAt: null, events: [] };
     this.flush(); return true;
   }
   record(message) {
@@ -31,7 +31,7 @@ export class ExecutionJournal {
     if (message.externalEffectPossible) { entry.externalEffectPossible = true; this.flush(); }
     if (['artifact.created', 'agent.message.completed', 'task.completed', 'task.cancelled', 'task.failed', 'runtime.control.result'].includes(message.type)) {
       entry.events.push(event);
-      if (['task.completed', 'task.cancelled', 'task.failed', 'runtime.control.result'].includes(message.type)) entry.status = 'RESULT';
+      if (['task.completed', 'task.cancelled', 'task.failed', 'runtime.control.result'].includes(message.type)) { entry.status = 'RESULT'; entry.finishedAt = Date.now(); }
       this.flush();
     }
     return event;
@@ -41,7 +41,7 @@ export class ExecutionJournal {
       const entry = this.entries[request.taskId];
       if (!entry || entry.attemptId !== request.attemptId || entry.dispatchId !== request.dispatchId) return { ...request, state: 'UNKNOWN' };
       const state = entry.status === 'RESULT' ? 'RESULT' : live(entry.taskId, entry.executor) ? 'RUNNING' : entry.externalEffectPossible || entry.executor === 'operation' ? 'UNCERTAIN' : 'INTERRUPTED';
-      return { taskId: entry.taskId, attemptId: entry.attemptId, dispatchId: entry.dispatchId, state, startedAt: entry.startedAt, lastProgressAt: entry.lastProgressAt, externalEffectPossible: Boolean(entry.externalEffectPossible), events: state === 'RESULT' ? entry.events : [] };
+      return { taskId: entry.taskId, attemptId: entry.attemptId, dispatchId: entry.dispatchId, state, startedAt: entry.startedAt, lastProgressAt: entry.lastProgressAt, externalEffectPossible: Boolean(entry.externalEffectPossible), permissionWaitMs: entry.permissionWaitMs || 0, permissionStartedAt: entry.permissionStartedAt || null, policy: entry.policy, events: state === 'RESULT' ? entry.events : [] };
     });
   }
 }

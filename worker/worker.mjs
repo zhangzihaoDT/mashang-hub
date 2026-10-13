@@ -1,9 +1,10 @@
+import { artifactCandidates, toolArtifacts } from "./task-artifacts.mjs";
 import { Permissions } from "./permissions.mjs";
 import { PublicationService, existingPublisher } from './publishing/service.mjs';
 import { PublicationOperation, PUBLISH_OPERATION } from './publishing/operation.mjs';
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { PublishGate, TOOL_DENIAL, verifiedToolDenial } from "./publishing/gate.mjs";
@@ -55,8 +56,8 @@ const permissions = new Permissions({
     if (!record || record.settled || record.source || !entry) return null;
     return { taskId, userMessageId: record.userMessageId, directory: record.directory, attemptId: entry.attemptId, dispatchId: entry.dispatchId };
   },
-  pause(taskId) { const record = activeTasks.get(taskId); if (!record || record.permissionStartedAt) return; record.permissionStartedAt = Date.now(); clearTimeout(record.safety); },
-  resume(taskId) { const record = activeTasks.get(taskId); if (!record?.permissionStartedAt || record.settled) return; record.permissionWaitMs = (record.permissionWaitMs || 0) + Date.now() - record.permissionStartedAt; record.permissionStartedAt = null; updateTaskPolicy({ taskId, ...journal.entries[taskId], policy: record.policy }); },
+  pause(taskId, observedAt) { const record = activeTasks.get(taskId); if (!record || record.permissionStartedAt) return; record.permissionStartedAt = Number.isFinite(observedAt) && observedAt >= record.startedAt && observedAt <= Date.now() ? observedAt : Date.now(); clearTimeout(record.safety); saveExecutionEvidence(taskId, record); },
+  resume(taskId) { const record = activeTasks.get(taskId); if (!record?.permissionStartedAt || record.settled) return; record.permissionWaitMs = (record.permissionWaitMs || 0) + Date.now() - record.permissionStartedAt; record.permissionStartedAt = null; saveExecutionEvidence(taskId, record); updateTaskPolicy({ taskId, ...journal.entries[taskId], policy: record.policy }); },
 });
 const progressSeen = new Map();
 let socket;
@@ -100,7 +101,12 @@ async function openCode(path, options = {}) {
   return fetch(url, { ...rest, headers: { "content-type": "application/json", "x-opencode-directory": directory, ...(rest.headers || {}) } });
 }
 async function openCodeJSON(path, options = {}) { const response = await openCode(path, options); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || `OpenCode HTTP ${response.status}`); return data; }
-function send(message) { message = journal.record(message); if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
+function send(message) {
+  if (['permission.requested', 'permission.resolved'].includes(message.type)) {
+    const record = activeTasks.get(message.taskId);
+    if (record) message = { ...message, permissionWaitMs: record.permissionWaitMs || 0, permissionStartedAt: record.permissionStartedAt || null };
+  }
+  message = journal.record(message); if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); }
 function heartbeat() { if (!publishingEnabled) permissions.sync(); send({ type: "worker.heartbeat", workerId, timestamp: new Date().toISOString(), status: busy ? "BUSY" : "ONLINE" }); }
 function modelList(data) {
   const all = Object.values(data.providers || {}).flatMap((provider) => Object.values(provider.models || {}).map((model) => ({ ...model, providerID: model.providerID || provider.id })));
@@ -112,18 +118,45 @@ function modelList(data) {
     { key: "luna", label: "GPT-5.6 Luna", available: Boolean(luna), providerID: luna?.providerID, modelID: luna?.id, actualName: luna?.name },
   ];
 }
+async function announceArtifact(artifact, taskId, artifactId = null) {
+  const entry = journal.entries[taskId];
+  const digest = createHash('sha256').update(await readFile(artifact.file)).digest('hex');
+  const old = entry?.events.find(e => e.type === 'artifact.created' && e.path === artifact.path);
+  if (old?.digest === digest && localArtifacts.has(old.artifactId)) return;
+  artifactId ||= old?.artifactId || `artifact_${randomUUID()}`;
+  localArtifacts.set(artifactId, { ...artifact, digest });
+  const event = { type: 'artifact.created', artifactId, taskId, name: artifact.name, extension: artifact.extension, mimeType: artifact.mimeType, artifactType: artifact.type, size: artifact.size, path: artifact.path, digest };
+  if (old) { Object.assign(old, event); journal.flush(); if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...event, attemptId: entry.attemptId, dispatchId: entry.dispatchId })); }
+  else send(event);
+}
 async function detectArtifacts(text, taskId, workspace) {
-  const pattern = /(?:^|[\s"'`(：:])([^\s"'`<>(),;]+\.(?:md|html|csv|png))(?=$|[\s"'`<>(),;])/giu;
-  for (const match of text.matchAll(pattern)) {
-    const artifact = await resolveLocalArtifact(match[1], workspace.root, workspace.outputRoots); if (!artifact) { console.log("artifact candidate rejected"); continue; }
-    console.log("artifact candidate accepted");
-    const artifactId = `artifact_${randomUUID()}`; localArtifacts.set(artifactId, artifact);
-    send({ type: "artifact.created", artifactId, taskId, name: artifact.name, extension: artifact.extension, mimeType: artifact.mimeType, artifactType: artifact.type, size: artifact.size, path: artifact.path });
+  for (const path of new Set(artifactCandidates(text))) {
+    const artifact = await resolveLocalArtifact(path, workspace.root, workspace.outputRoots);
+    if (artifact) await announceArtifact(artifact, taskId);
   }
 }
+async function collectTaskArtifacts(taskId, workspace, messages = null) {
+  const entry = journal.entries[taskId];
+  if (!entry?.openCodeSessionId || !entry.userMessageId) return;
+  messages ||= await openCodeJSON(`/session/${encodeURIComponent(entry.openCodeSessionId)}/message?limit=100`, { directory: workspace.root, signal: AbortSignal.timeout(5000) });
+  if (!Array.isArray(messages)) return;
+  for (const artifact of await toolArtifacts(messages, entry, workspace)) await announceArtifact(artifact, taskId);
+}
+async function restoreArtifactRegistry() {
+  for (const entry of Object.values(journal.entries)) {
+    const workspace = resolveWorkspace(workspaces, entry.workspaceId);
+    if (!workspace) continue;
+    if (entry.status === 'RESULT' && entry.events.some(e => ['task.cancelled', 'task.failed'].includes(e.type))) await collectTaskArtifacts(entry.taskId, workspace).catch(() => {});
+    for (const event of entry.events.filter(e => e.type === 'artifact.created')) {
+      const artifact = await resolveLocalArtifact(event.path, workspace.root, workspace.outputRoots).catch(() => null);
+      if (artifact && (!event.digest || createHash('sha256').update(await readFile(artifact.file)).digest('hex') === event.digest)) { localArtifacts.set(event.artifactId, { ...artifact, digest: event.digest }); if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...event, size: artifact.size })); }
+    }
+  }
+}
+
 async function handleArtifactRequest(message) {
   const artifact = localArtifacts.get(message.artifactId); if (!artifact) return send({ type: "artifact.response", requestId: message.requestId, error: "Artifact not found" });
-  try { const data = await readFile(artifact.file); send({ type: "artifact.response", requestId: message.requestId, artifactId: message.artifactId, filename: artifact.name, contentType: `${artifact.mimeType}; charset=utf-8`.replace("image/png; charset=utf-8", "image/png"), contentBase64: data.toString("base64") }); }
+  try { const data = await readFile(artifact.file); if (artifact.digest && createHash('sha256').update(data).digest('hex') !== artifact.digest) throw Error('Artifact changed since registration'); send({ type: "artifact.response", requestId: message.requestId, artifactId: message.artifactId, filename: artifact.name, contentType: `${artifact.mimeType}; charset=utf-8`.replace("image/png; charset=utf-8", "image/png"), contentBase64: data.toString("base64") }); }
   catch (error) { send({ type: "artifact.response", requestId: message.requestId, error: error.message }); }
 }
 function eventType(event) { return event?.type || event?.event || "unknown"; }
@@ -144,14 +177,18 @@ async function listenOpenCodeEvents() {
     const response = await openCode("/event", { headers: { accept: "text/event-stream" } }); if (!response.ok || !response.body) throw new Error(`event HTTP ${response.status}`);
     console.log("opencode connected"); send({ type: "worker.status", workerId, status: busy ? "BUSY" : "ONLINE", opencode: "CONNECTED" }); await publishRegistration(); await permissions.sync();
     eventReader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); const part = event.properties?.part; if (part?.type === 'tool' && ['edit', 'write', 'apply_patch'].includes(part.tool)) { const taskId = sessionToTask.get(part.sessionID); const record = activeTasks.get(taskId); if (record && !record.classReported) { record.classReported = true; send({ type: 'opencode.execution.class', taskId, executionClass: 'verified' }); } } if (['message.part.updated', 'message.part.delta', 'message.updated'].includes(type)) { const sessionID = event.properties?.part?.sessionID || event.properties?.info?.sessionID || event.properties?.sessionID; const taskId = sessionToTask.get(sessionID); if (taskId && Date.now() - (progressSeen.get(`${taskId}:ts`) || 0) >= 1000) { progressSeen.set(`${taskId}:ts`, Date.now()); send({ type: 'opencode.progress', taskId, value: type }); } } if (type.startsWith("permission.") && !publishingEnabled) { void permissions.event(event); } else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
+    while (true) { const { done, value } = await eventReader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const records = buffer.split("\n\n"); buffer = records.pop() || ""; for (const record of records) { const data = record.split("\n").find((line) => line.startsWith("data:"))?.slice(5).trim(); if (!data) continue; try { const event = JSON.parse(data); const type = eventType(event); const part = event.properties?.part;
+      if (part?.type === 'tool' && part.state?.status === 'completed') {
+        const id = sessionToTask.get(part.sessionID), entry = journal.entries[id], workspace = entry && resolveWorkspace(workspaces, entry.workspaceId);
+        if (workspace) void collectTaskArtifacts(id, workspace).catch(() => {});
+      } if (part?.type === 'tool' && ['edit', 'write', 'apply_patch'].includes(part.tool)) { const taskId = sessionToTask.get(part.sessionID); const record = activeTasks.get(taskId); if (record && !record.classReported) { record.classReported = true; send({ type: 'opencode.execution.class', taskId, executionClass: 'verified' }); } } if (['message.part.updated', 'message.part.delta', 'message.updated'].includes(type)) { const sessionID = event.properties?.part?.sessionID || event.properties?.info?.sessionID || event.properties?.sessionID; const taskId = sessionToTask.get(sessionID); if (taskId && Date.now() - (progressSeen.get(`${taskId}:ts`) || 0) >= 1000) { progressSeen.set(`${taskId}:ts`, Date.now()); send({ type: 'opencode.progress', taskId, value: type }); } } if (type.startsWith("permission.") && !publishingEnabled) { void permissions.event(event); } else if (type === "session.status" && event.properties?.status?.type === "busy") { const openCodeSessionId = event.properties.sessionID; const taskId = sessionToTask.get(openCodeSessionId); if (taskId && progressSeen.get(taskId) !== "busy") { progressSeen.set(taskId, "busy"); send({ type: "opencode.progress", taskId, openCodeSessionId, value: "busy" }); } } } catch { /* Unknown OpenCode events are intentionally ignored. */ } } }
   } catch { send({ type: "worker.status", workerId, status: "ERROR", opencode: "DISCONNECTED" }); setTimeout(listenOpenCodeEvents, 3000); }
   finally { listening = false; }
 }
 function updateTaskPolicy(message) {
   const record = activeTasks.get(message.taskId), entry = journal.entries[message.taskId];
   if (!record || !entry || entry.attemptId !== message.attemptId || entry.dispatchId !== message.dispatchId || !Number.isFinite(message.policy?.executionDeadlineMs) || message.policy.executionDeadlineMs <= 0) return;
-  record.policy = message.policy;
+  record.policy = message.policy; saveExecutionEvidence(message.taskId, record);
   clearTimeout(record.safety);
   if (record.permissionStartedAt) return;
   record.safety = setTimeout(() => cancelTask({ taskId: message.taskId, source: 'timeout' }), Math.max(0, entry.startedAt + (record.permissionWaitMs || 0) + message.policy.executionDeadlineMs + timeoutConfig().graceMs + 30000 - Date.now()));
@@ -160,7 +197,8 @@ function saveExecutionEvidence(taskId, record) {
   Object.assign(journal.entries[taskId], {
     openCodeSessionId: record.openCodeSessionId, userMessageId: record.userMessageId,
     workspaceId: record.workspaceId, cancelSource: record.source,
-    abortAcknowledged: Boolean(record.abortAcknowledged),
+    abortAcknowledged: Boolean(record.abortAcknowledged), policy: record.policy,
+    permissionWaitMs: record.permissionWaitMs || 0, permissionStartedAt: record.permissionStartedAt || null,
   });
   journal.flush();
 }
@@ -177,6 +215,7 @@ async function deliverAgentResult(task, workspace, response) {
   send({ type: 'task.completed', taskId: task.taskId, sessionId: task.sessionId });
 }
 async function settleExecutionEvidence(task, workspace, evidence, source) {
+  await collectTaskArtifacts(task.taskId, workspace).catch(() => {});
   if (evidence.state === 'COMPLETED') return deliverAgentResult(task, workspace, evidence.response);
   if (evidence.state === 'CANCELLED') send({ type: 'task.cancelled', taskId: task.taskId, sessionId: task.sessionId, source: source || 'user', executionStopped: true });
   else send({ type: 'task.failed', taskId: task.taskId, sessionId: task.sessionId, reason: 'OPENCODE_ERROR', error: evidence.error });
@@ -192,7 +231,7 @@ async function handleTask(task) {
     return;
   }
   const controller = new AbortController();
-  const record = { policy: task.policy || { executionDeadlineMs: safetyAbortMs }, controller, openCodeSessionId: null, source: null, workspaceId: workspace.id, directory: workspace.root, userMessageId: `msg_${Date.now().toString(16).padStart(12, '0')}${randomUUID().replaceAll('-', '').slice(0, 14)}`, requestStarted: false };
+  const record = { startedAt: journal.entries[task.taskId].startedAt, policy: task.policy || { executionDeadlineMs: safetyAbortMs }, controller, openCodeSessionId: null, source: null, workspaceId: workspace.id, directory: workspace.root, userMessageId: `msg_${Date.now().toString(16).padStart(12, '0')}${randomUUID().replaceAll('-', '').slice(0, 14)}`, requestStarted: false };
   const reconciliation = new Promise(resolve => { record.reconcileRequested = resolve; });
   activeTasks.set(task.taskId, record);
   record.safety = setTimeout(() => cancelTask({ taskId: task.taskId, source: "timeout" }), (task.policy?.executionDeadlineMs || safetyAbortMs) + timeoutConfig().graceMs + 30000);
@@ -318,6 +357,7 @@ async function readOperationPreview(message) {
   catch { send({ type: 'artifact.response', requestId: message.requestId, error: 'SNAPSHOT_UNAVAILABLE' }); }
 }
 async function sendReconciliation(requests) {
+  for (const request of requests) if (request.policy) updateTaskPolicy({ ...request });
   if (publication) for (const request of requests) {
     const entry = journal.entries[request.taskId];
     if (!entry?.operation || entry.events.some(event => event.type === 'runtime.control.result' && ['COMPLETED', 'FAILED'].includes(event.status)) || activeControls.has(request.taskId) || entry.attemptId !== request.attemptId || entry.dispatchId !== request.dispatchId) continue;
@@ -335,13 +375,13 @@ async function recoverExecutions() {
     const record = { ...entry, source: entry.cancelSource, directory: workspace.root, controller: new AbortController(), requestStarted: true };
     activeTasks.set(entry.taskId, record); sessionToTask.set(entry.openCodeSessionId, entry.taskId); sessionWorkspace.set(entry.openCodeSessionId, workspace.root); busy++;
     const task = { taskId: entry.taskId, sessionId: entry.sessionId };
-    waitForExecution(openCodeJSON, record, executionWaitOptions(entry.taskId, record))
+    waitForExecution(openCodeJSON, record, { ...executionWaitOptions(entry.taskId, record), recovering: true })
       .then(evidence => settleExecutionEvidence(task, workspace, evidence, record.source))
       .catch(() => send({ type: 'task.interrupted', taskId: entry.taskId, reason: 'EXECUTION_UNVERIFIED' }))
       .finally(() => { clearTimeout(record.safety); record.settled = true; activeTasks.delete(entry.taskId); sessionToTask.delete(entry.openCodeSessionId); busy = Math.max(0, busy - 1); });
   }
 }
-async function register() { runtimeSequence = 0; await publishRegistration(); listenOpenCodeEvents(); publishRuntimeSnapshot(); }
+async function register() { runtimeSequence = 0; await permissions.sync(); await publishRegistration(); await restoreArtifactRegistry(); listenOpenCodeEvents(); publishRuntimeSnapshot(); }
 function connect() {
   const url = new URL(hubURL); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = "/worker";
   socket = new WebSocket(url, { headers: { Authorization: `Bearer ${workerSecret}` } });

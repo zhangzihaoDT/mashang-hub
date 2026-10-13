@@ -6,10 +6,12 @@ import { ExecutionJournal } from '../worker/execution-journal.mjs';
 const directory=mkdtempSync(join(tmpdir(),'hub-journal-'));
 try {
  const path=join(directory,'journal.json');let journal=new ExecutionJournal(path);
- const request={taskId:'task1',attemptId:'attempt1',dispatchId:'dispatch1'};
+ const request={taskId:'task1',attemptId:'attempt1',dispatchId:'dispatch1',policy:{executionDeadlineMs:600}};
  assert.ok(journal.begin(request));assert.equal(journal.begin(request),false);
  assert.equal(journal.reconcile([request],()=>true)[0].state,'RUNNING');
+ Object.assign(journal.entries.task1,{permissionWaitMs:100,permissionStartedAt:Date.now()});journal.flush();
  journal=new ExecutionJournal(path);
+ assert.equal(journal.entries.task1.policy.executionDeadlineMs,600);assert.equal(journal.reconcile([request],()=>true)[0].permissionWaitMs,100);assert.ok(journal.reconcile([request],()=>true)[0].permissionStartedAt);
  assert.equal(journal.reconcile([request],()=>false)[0].state,'INTERRUPTED','persisted RUNNING does not prove liveness');
  assert.equal(journal.reconcile([{...request,attemptId:'wrong'}],()=>true)[0].state,'UNKNOWN');
  journal.record({type:'task.running',taskId:'task1',externalEffectPossible:true});
