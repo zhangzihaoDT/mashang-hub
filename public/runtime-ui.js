@@ -69,6 +69,8 @@ export function initRuntimeUI() {
   let controlError = "";
   let queryFeedback = "";
   let querying = false;
+  const reportSummaries = new Map();
+  let discussion = null;
   let snapshot = null;
   let workerOnline = false;
   const controls = new Map();
@@ -166,13 +168,50 @@ export function initRuntimeUI() {
   function businessItem(operation) {
     const d = operation.details || {}, q = d.quality, publication = d.publication;
     const safe = workerOnline && !snapshotStale();
-    const latestDate = publication?.trade_date || "—";
-    const date = /^\d{8}$/.test(latestDate) ? `${latestDate.slice(0,4)}-${latestDate.slice(4,6)}-${latestDate.slice(6)}` : latestDate;
-    const status = operation.lastRun?.status || "UNKNOWN";
+    const pretty = v => /^\d{8}$/.test(v || '') ? `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6)}` : v || '—';
+    const status = operation.lastRun?.status || 'UNKNOWN';
     const warnings = [...(q?.warnings || []), ...(q?.errors || [])];
-    const html = (operation.artifacts || []).find(a=>a.extension === ".html");
-    const links = (operation.artifacts || []).map(a=>`<span>${escapeHTML(a.name)} <a href="/api/artifacts/content?artifactId=${encodeURIComponent(a.artifactId)}" target="_blank" rel="noopener">预览</a> <a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载</a></span>`).join("");
-    return `<li class="business-operation"><section class="business-batch"><span class="rt-sub">最新正式业务批次</span><h2>${escapeHTML(date)}</h2><span class="runtime-state ${q?.data_complete === false ? 'unknown' : 'completed'}">${escapeHTML(q?.status || '尚无正式发布')} · ${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'}</span><p>发布于 ${escapeHTML(formatTime(publication?.published_at, d.timezone))}</p><dl class="runtime-facts">${(d.metrics || []).map(m=>`<div><dt>${escapeHTML(m.label)}</dt><dd>${escapeHTML(m.value)}</dd></div>`).join('')}<div><dt>当前目标交易日</dt><dd>${escapeHTML(d.targetDate || '—')}</dd></div><div><dt>业务状态</dt><dd>${escapeHTML(safe ? status : workerOnline ? '快照已过期' : 'Worker Offline')}</dd></div><div><dt>运行时间</dt><dd>${escapeHTML(d.elapsedSeconds ?? '—')} 秒</dd></div><div><dt>数据完整性</dt><dd>${q?.data_complete === false ? '未通过' : q?.data_complete === true ? '通过' : '未知'} · data_complete=${escapeHTML(q?.data_complete ?? 'unknown')}</dd></div><div><dt>当前阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div></dl>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}${d.retryAt ? `<p>下次可重试 ${escapeHTML(formatTime(d.retryAt))}</p>` : ''}</section><section><h2>业务操作</h2><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled ? 'disabled' : ''}>手动补跑</button><button class="rt-btn" data-refresh="1" ${querying ? "disabled" : ""}>${querying ? "查询中…" : "查询状态"}</button>${html ? `<a class="rt-btn" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看日报</a>` : ''}</div><p role="status" aria-live="polite" class="rt-sub">${escapeHTML(queryFeedback)}</p><p class="rt-sub">${escapeHTML(operation.description || '')}</p></section><section><h2>数据质量 · ${escapeHTML(publication?.trade_date || "待验收")}</h2>${warnings.map(v=>`<p>${escapeHTML(v)}</p>`).join('') || '<p>暂无质量记录</p>'}${q?.truncated ? '<p>质量信息已截断，完整证据见正式日报附件。</p>' : ''}</section><section><h2>日报附件</h2><div class="business-attachments">${links || '尚无正式发布附件'}</div><p class="rt-sub">${escapeHTML(publication?.run_id || '')}</p></section></li>`;
+    const html = (operation.artifacts || []).find(a=>a.extension === '.html');
+    const summary = html && reportSummaries.get(html.artifactId);
+    if (html && !summary) loadReportSummary(html);
+    const links = (operation.artifacts || []).map(a=>`<a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载 ${a.extension === '.html' ? 'HTML' : 'Markdown'}</a>`).join('');
+    const source = q?.status === 'CONFIRMED' ? '来源已确认' : q?.status === 'COMPLETE' ? '包含兜底来源' : '待核验';
+    const current = !safe ? workerOnline ? '快照已过期' : 'Worker 离线' : ({PUBLISHED:'已发布',RUNNING:'运行中',WAITING:'等待数据 / 恢复',BLOCKED:'已阻断',IDLE:'尚未运行'})[status] || status;
+    const facts = summary?.sections?.map(section=>`<article><h3>${escapeHTML(section.title)}</h3>${section.rows.map(row=>`<p>${escapeHTML(row)}</p>`).join('')}</article>`).join('');
+    return `<li class="business-operation">
+      <section class="business-batch"><div class="business-section-head"><h2>最新日报</h2><strong class="business-date">${escapeHTML(pretty(publication?.trade_date))}</strong></div>
+        <div class="business-badges"><span class="runtime-state online">${escapeHTML(source)}</span><span class="runtime-state ${q?.data_complete === false ? 'unknown' : 'completed'}">${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'}</span></div>
+        <div class="business-summary">${facts || `<p class="rt-sub">${escapeHTML(summary?.error || (html ? '正在读取正式日报摘要…' : '尚无正式发布日报'))}</p>`}</div>
+        <div class="business-section-head"><span class="rt-sub">发布于 ${escapeHTML(formatTime(publication?.published_at,d.timezone))} · 事实速览 · 各表首条样本，完整市场结论请阅读日报</span><div class="rt-actions">${html ? `<a class="rt-btn business-primary" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看完整日报</a>` : ''}${links}</div></div>
+      </section>
+      <section><div class="business-section-head"><div><h2>讨论本期市场</h2><p class="rt-sub">围绕 ${escapeHTML(pretty(publication?.trade_date))} 的已发布事实提问</p></div><button class="rt-btn" data-talk ${html ? '' : 'disabled'}>准备讨论</button></div>
+        ${discussion ? `<div class="business-talk"><label for="marketQuestion">你的问题</label><textarea id="marketQuestion" rows="3" placeholder="例如：哪些行业已形成趋势？哪些结论受数据缺口影响？">${escapeHTML(discussion.question)}</textarea><p class="rt-sub">已固定批次 ${escapeHTML(pretty(discussion.date))}。当前未连接 AKsignal 对话执行器，可复制问题与证据到对话中讨论。</p><button class="rt-btn" data-copy-talk>复制讨论上下文</button><button class="rt-btn" data-close-talk>收起</button><p role="status" data-talk-feedback></p></div>` : ''}
+      </section>
+      <section><div class="business-section-head"><div><h2>当前任务</h2><p>目标 ${escapeHTML(pretty(d.targetDate))} · <strong>${escapeHTML(current)}</strong>${status === 'RUNNING' ? ` · ${escapeHTML(d.phase || '')} · ${escapeHTML(d.elapsedSeconds ?? 0)} 秒` : ''}</p></div><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled ? 'disabled' : ''}>手动补跑</button><button class="rt-btn" data-refresh ${querying ? 'disabled' : ''}>${querying ? '查询中…' : '查询状态'}</button></div></div>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}${d.retryAt ? `<p>下次可重试 ${escapeHTML(formatTime(d.retryAt))}</p>` : ''}<p role="status" aria-live="polite" class="rt-sub">${escapeHTML(queryFeedback)}</p></section>
+      <section><h2>数据质量</h2><p class="business-quality ${q?.data_complete === false ? 'incomplete' : ''}">${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'} · ${warnings.length} 项警告${q?.truncated ? '（部分截断）' : ''}</p>${(d.metrics || []).map(m=>`<p>${escapeHTML(m.label)} <strong>${escapeHTML(m.value)}</strong></p>`).join('')}<details class="business-warnings"><summary>查看全部质量记录</summary>${warnings.map(v=>`<p>${escapeHTML(v)}</p>`).join('') || '<p>暂无质量记录</p>'}${q?.truncated ? '<p>完整证据见正式日报附件。</p>' : ''}</details></section>
+      <details class="business-diagnostics"><summary>运行详情</summary><dl class="runtime-facts"><div><dt>Worker</dt><dd>${escapeHTML(snapshot?.workerId || '—')}</dd></div><div><dt>快照</dt><dd>${escapeHTML(formatTime(snapshot?.generatedAt))}</dd></div><div><dt>正式 run_id</dt><dd>${escapeHTML(publication?.run_id || '—')}</dd></div><div><dt>当前 run_id</dt><dd>${escapeHTML(d.runId || '—')}</dd></div><div><dt>阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div><div><dt>data_complete</dt><dd>${escapeHTML(q?.data_complete ?? 'unknown')}</dd></div></dl><p class="rt-sub">${escapeHTML(operation.description || '')}</p></details>
+    </li>`;
+  }
+  async function loadReportSummary(artifact) {
+    reportSummaries.set(artifact.artifactId, {loading:true});
+    try {
+      const response = await fetch(`/api/artifacts/content?artifactId=${encodeURIComponent(artifact.artifactId)}`);
+      if (!response.ok) throw Error('摘要读取失败，请查看完整日报');
+      const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+      const headings = [...doc.querySelectorAll('h2')].filter(h=>/^0[123]/.test(h.textContent.trim()));
+      const sections = headings.map(h=> {
+        const container = h.closest('section') || h.parentElement;
+        const tables = [...container.querySelectorAll('table')];
+        const first = tables[0], second = tables.find(t=>t!==first && /股票|行业/.test(t.querySelector('thead')?.textContent || ''));
+        const rows = [first,second].filter(Boolean).flatMap(table=> {
+          const headers = [...table.querySelectorAll('thead th')].map(c=>c.textContent.trim());
+          return [...table.querySelectorAll('tbody tr')].slice(0,1).map(row=>[...row.querySelectorAll('td')].slice(0,4).map((c,i)=>`${headers[i] ? headers[i]+': ' : ''}${c.textContent.trim()}`).join(' · '));
+        });
+        return {title:h.textContent.trim().replace(/^0[123]\s*/,''),rows:rows.length ? rows : ['详细事实见完整日报']};
+      });
+      reportSummaries.set(artifact.artifactId, {sections});
+    } catch(e) {reportSummaries.set(artifact.artifactId,{error:e.message});}
+    if (workspace === 'aksignal') render();
   }
   function controlItem(control) {
     const state = stateOf(CONTROL_STATES, control.status);
@@ -215,12 +254,14 @@ export function initRuntimeUI() {
       const actions = [...matching.filter(item=>ACTIVE_CONTROL_STATUSES.has(item.status)), ...matching.filter(item=>!ACTIVE_CONTROL_STATUSES.has(item.status) && Date.now()-(item.updatedAt ?? item.createdAt ?? 0)<=RECENT_MAX_AGE_MS).slice(0,RECENT_LIMIT)];
       const activeActions = actions.filter(item=>ACTIVE_CONTROL_STATUSES.has(item.status));
       const history = actions.filter(item=>!ACTIVE_CONTROL_STATUSES.has(item.status));
+      const openedBusiness = [...mount.querySelectorAll(".business-warnings[open],.business-diagnostics[open]")].map(e=>e.className);
       const historyOpen = mount.querySelector(".runtime-history")?.open;
       const detailsOpen = mount.querySelector(".runtime-diagnostics")?.open;
-      mount.innerHTML = (controlError ? `<p role="alert" class="rt-empty">${escapeHTML(controlError)}</p>` : "") + (mount === independentMount ? "" : `<div class="workspace-runtime-meta">运行节点 · ${escapeHTML(snapshot?.workerId || "Mac Worker")} · ${workerOnline ? "Worker 在线" : "Worker 离线"} · 快照 ${escapeHTML(formatTime(snapshot?.generatedAt))}</div>`)
-        + (workspace === "publish" ? `<p class="rt-empty">${operations.some(item=>belongs(item) && item.requiresSnapshot) ? "发布审批与结果在对话中展示。" : "正式发布尚未接入：Worker 尚未注册快照发布能力。"}</p>` : `<ul class="rt-list">${entries.join("") || '<li class="rt-empty">尚无属于此工作空间的 Runtime 记录</li>'}</ul><p class="workspace-runtime-note ${mount === independentMount ? 'hidden' : ''}">服务状态来自 Worker 探测，不等于本设备可访问。Offline 表示探测未通过，不能单凭它认定进程已停止。日志目前可在 Worker 本机通过 mashang logs 查看。</p>`)
+      mount.innerHTML = (controlError ? `<p role="alert" class="rt-empty">${escapeHTML(controlError)}</p>` : "") + (mount === independentMount || mount === businessMount ? "" : `<div class="workspace-runtime-meta">运行节点 · ${escapeHTML(snapshot?.workerId || "Mac Worker")} · ${workerOnline ? "Worker 在线" : "Worker 离线"} · 快照 ${escapeHTML(formatTime(snapshot?.generatedAt))}</div>`)
+        + (workspace === "publish" ? `<p class="rt-empty">${operations.some(item=>belongs(item) && item.requiresSnapshot) ? "发布审批与结果在对话中展示。" : "正式发布尚未接入：Worker 尚未注册快照发布能力。"}</p>` : `<ul class="rt-list">${entries.join("") || '<li class="rt-empty">尚无属于此工作空间的 Runtime 记录</li>'}</ul><p class="workspace-runtime-note ${mount === independentMount || mount === businessMount ? 'hidden' : ''}">服务状态来自 Worker 探测，不等于本设备可访问。Offline 表示探测未通过，不能单凭它认定进程已停止。日志目前可在 Worker 本机通过 mashang logs 查看。</p>`)
         + (activeActions.length ? `<ul class="rt-list rt-current-actions">${activeActions.map(controlItem).join("")}</ul>` : "")
         + (history.length ? `<details class="runtime-history"><summary>操作历史 · ${history.length}</summary><p>以下是已结束的操作记录，不代表当前服务状态。</p><ul class="rt-list">${history.map(controlItem).join("")}</ul></details>` : "");
+      for (const cls of openedBusiness) { const el=mount.querySelector("."+cls); if(el) el.open=true; }
       if (historyOpen && mount.querySelector(".runtime-history")) mount.querySelector(".runtime-history").open = true;
       if (detailsOpen && mount.querySelector(".runtime-diagnostics")) mount.querySelector(".runtime-diagnostics").open = true;
       if (actions.some(item=>item.status === "AWAITING_PERMISSION") && mount === conversationMount) mount.closest("details").open = true;
@@ -245,7 +286,7 @@ export function initRuntimeUI() {
       const response = await fetch("/api/runtime/controls", { headers: { accept: "application/json" } });
       if (response.ok) for (const control of await response.json()) upsertControl(control);
     } catch { /* Ignore control list refresh errors. */ }
-    if (manual) { querying = false; queryFeedback = succeeded ? `已查询 · ${formatTime(new Date().toISOString())} · ${workerOnline ? "Worker 在线" : "Worker 离线"} · 快照 ${formatTime(snapshot?.generatedAt)}（不会触发行情更新）` : "查询失败，请检查连接"; }
+    if (manual) { querying = false; queryFeedback = succeeded ? "状态已更新" : "查询失败，请检查连接"; setTimeout(()=>{queryFeedback=""; if(workspace === "aksignal") render();},4000); }
     render();
   }
 
@@ -286,7 +327,18 @@ export function initRuntimeUI() {
     } catch { /* SSE will reconcile state. */ }
   }
 
+  businessMount?.addEventListener('input',event=>{if(event.target.id === 'marketQuestion' && discussion) discussion.question=event.target.value;});
   const handleClick = (event) => {
+    if(event.target.closest('[data-talk]')) {
+      const op=snapshot?.operations?.find(o=>o.workspace==='aksignal');
+      const p=op?.details?.publication;
+      if(p) {discussion={date:p.trade_date,runId:p.run_id,quality:op.details.quality,artifacts:op.artifacts,question:'',sections:reportSummaries.get(op.artifacts?.find(a=>a.extension==='.html')?.artifactId)?.sections || []};render();businessMount.querySelector('textarea')?.focus();} return;
+    }
+    if(event.target.closest('[data-close-talk]')) {discussion=null;render();return;}
+    if(event.target.closest('[data-copy-talk]') && discussion) {
+      const text=`请仅依据下列已发布市场事实讨论，不更新行情、不重新计算、不执行交易。未知内容明确说明。\n交易日：${discussion.date}\nrun_id：${discussion.runId}\n数据质量：${JSON.stringify(discussion.quality)}\n事实摘要：${JSON.stringify(discussion.sections)}\n附件证据：${JSON.stringify(discussion.artifacts)}\n问题：${discussion.question}`;
+      navigator.clipboard.writeText(text).then(()=>{businessMount.querySelector('[data-talk-feedback]').textContent='讨论上下文已复制';}).catch(()=>{businessMount.querySelector('[data-talk-feedback]').textContent='复制未获浏览器授权，请查看日报并手动引用';});return;
+    }
     if (event.target.closest("[data-refresh]")) { refresh(true); return; }
     const action = event.target.closest("[data-op]");
     if (action && (action.disabled || !workerOnline || snapshotStale())) return;

@@ -67,8 +67,16 @@ try {
   assert.equal(await page.locator('.workspace-tab').count(),5);
   assert.equal(await page.locator('#conversationWorkspace').isVisible(),false);
   assert.equal(await page.locator('#independentWorkspace').isVisible(),false);
-  assert.match(await page.locator('#businessRuntime').textContent(),/data_complete=false/);
+  assert.match(await page.locator('#businessRuntime').textContent(),/数据不完整/);
   assert.match(await page.locator('#businessRuntime').textContent(),/124\/124/);
+  await page.waitForFunction(()=>document.querySelectorAll('.business-summary article').length===3);
+  assert.match(await page.locator('.business-summary').textContent(), /固定池|趋势分|股票/);
+  await page.locator('[data-talk]').click();
+  await page.locator('#marketQuestion').fill('行业趋势受哪些数据缺口影响？');
+  await page.locator('#businessRuntime [data-refresh]').click();
+  await page.getByRole('status').filter({hasText:'状态已更新'}).waitFor();
+  assert.equal(await page.locator('#marketQuestion').inputValue(),'行业趋势受哪些数据缺口影响？');
+  await page.locator('[data-close-talk]').click();
   await page.locator('#businessRuntime [data-op="run"]').click();
   await page.waitForSelector('#businessRuntime [data-decision="approve"]');
   await page.locator('#businessRuntime [data-decision="approve"]').click();
