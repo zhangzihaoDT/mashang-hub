@@ -222,7 +222,7 @@ export function initRuntimeUI() {
       if (historyOpen && mount.querySelector(".runtime-history")) mount.querySelector(".runtime-history").open = true;
       if (detailsOpen && mount.querySelector(".runtime-diagnostics")) mount.querySelector(".runtime-diagnostics").open = true;
       if (actions.some(item=>item.status === "AWAITING_PERMISSION") && mount === conversationMount) mount.closest("details").open = true;
-      if (!workerOnline || snapshotStale()) for (const button of mount.querySelectorAll("button")) button.disabled = true;
+      if (!workerOnline || snapshotStale()) for (const button of mount.querySelectorAll("button:not([data-refresh])")) button.disabled = true;
     }
   }
 
@@ -233,8 +233,9 @@ export function initRuntimeUI() {
         const data = await response.json();
         workerOnline = Boolean(data.workerOnline);
         snapshot = data.snapshot || null;
-      }
-    } catch { /* Keep the last known snapshot. */ }
+        controlError = "";
+      } else { controlError = "状态查询失败，请检查本地 Hub 连接"; }
+    } catch { workerOnline = false; controlError = "无法连接本地 Hub，请检查服务是否运行"; }
     try {
       const response = await fetch("/api/runtime/controls", { headers: { accept: "application/json" } });
       if (response.ok) for (const control of await response.json()) upsertControl(control);
