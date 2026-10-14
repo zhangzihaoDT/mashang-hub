@@ -67,6 +67,8 @@ export function initRuntimeUI() {
   const businessMount = document.getElementById("businessRuntime");
   let workspace = "service";
   let controlError = "";
+  let queryFeedback = "";
+  let querying = false;
   let snapshot = null;
   let workerOnline = false;
   const controls = new Map();
@@ -170,7 +172,7 @@ export function initRuntimeUI() {
     const warnings = [...(q?.warnings || []), ...(q?.errors || [])];
     const html = (operation.artifacts || []).find(a=>a.extension === ".html");
     const links = (operation.artifacts || []).map(a=>`<span>${escapeHTML(a.name)} <a href="/api/artifacts/content?artifactId=${encodeURIComponent(a.artifactId)}" target="_blank" rel="noopener">预览</a> <a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载</a></span>`).join("");
-    return `<li class="business-operation"><section class="business-batch"><span class="rt-sub">最新正式业务批次</span><h2>${escapeHTML(date)}</h2><span class="runtime-state ${q?.data_complete === false ? 'unknown' : 'completed'}">${escapeHTML(q?.status || '尚无正式发布')} · ${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'}</span><p>发布于 ${escapeHTML(formatTime(publication?.published_at, d.timezone))}</p><dl class="runtime-facts">${(d.metrics || []).map(m=>`<div><dt>${escapeHTML(m.label)}</dt><dd>${escapeHTML(m.value)}</dd></div>`).join('')}<div><dt>当前目标交易日</dt><dd>${escapeHTML(d.targetDate || '—')}</dd></div><div><dt>业务状态</dt><dd>${escapeHTML(safe ? status : workerOnline ? '快照已过期' : 'Worker Offline')}</dd></div><div><dt>运行时间</dt><dd>${escapeHTML(d.elapsedSeconds ?? '—')} 秒</dd></div><div><dt>数据完整性</dt><dd>${q?.data_complete === false ? '未通过' : q?.data_complete === true ? '通过' : '未知'} · data_complete=${escapeHTML(q?.data_complete ?? 'unknown')}</dd></div><div><dt>当前阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div></dl>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}${d.retryAt ? `<p>下次可重试 ${escapeHTML(formatTime(d.retryAt))}</p>` : ''}</section><section><h2>业务操作</h2><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled ? 'disabled' : ''}>手动补跑</button><button class="rt-btn" data-refresh="1">查询状态</button>${html ? `<a class="rt-btn" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看日报</a>` : ''}</div><p class="rt-sub">${escapeHTML(operation.description || '')}</p></section><section><h2>数据质量 · ${escapeHTML(publication?.trade_date || "待验收")}</h2>${warnings.map(v=>`<p>${escapeHTML(v)}</p>`).join('') || '<p>暂无质量记录</p>'}${q?.truncated ? '<p>质量信息已截断，完整证据见正式日报附件。</p>' : ''}</section><section><h2>日报附件</h2><div class="business-attachments">${links || '尚无正式发布附件'}</div><p class="rt-sub">${escapeHTML(publication?.run_id || '')}</p></section></li>`;
+    return `<li class="business-operation"><section class="business-batch"><span class="rt-sub">最新正式业务批次</span><h2>${escapeHTML(date)}</h2><span class="runtime-state ${q?.data_complete === false ? 'unknown' : 'completed'}">${escapeHTML(q?.status || '尚无正式发布')} · ${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'}</span><p>发布于 ${escapeHTML(formatTime(publication?.published_at, d.timezone))}</p><dl class="runtime-facts">${(d.metrics || []).map(m=>`<div><dt>${escapeHTML(m.label)}</dt><dd>${escapeHTML(m.value)}</dd></div>`).join('')}<div><dt>当前目标交易日</dt><dd>${escapeHTML(d.targetDate || '—')}</dd></div><div><dt>业务状态</dt><dd>${escapeHTML(safe ? status : workerOnline ? '快照已过期' : 'Worker Offline')}</dd></div><div><dt>运行时间</dt><dd>${escapeHTML(d.elapsedSeconds ?? '—')} 秒</dd></div><div><dt>数据完整性</dt><dd>${q?.data_complete === false ? '未通过' : q?.data_complete === true ? '通过' : '未知'} · data_complete=${escapeHTML(q?.data_complete ?? 'unknown')}</dd></div><div><dt>当前阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div></dl>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}${d.retryAt ? `<p>下次可重试 ${escapeHTML(formatTime(d.retryAt))}</p>` : ''}</section><section><h2>业务操作</h2><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled ? 'disabled' : ''}>手动补跑</button><button class="rt-btn" data-refresh="1" ${querying ? "disabled" : ""}>${querying ? "查询中…" : "查询状态"}</button>${html ? `<a class="rt-btn" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看日报</a>` : ''}</div><p role="status" aria-live="polite" class="rt-sub">${escapeHTML(queryFeedback)}</p><p class="rt-sub">${escapeHTML(operation.description || '')}</p></section><section><h2>数据质量 · ${escapeHTML(publication?.trade_date || "待验收")}</h2>${warnings.map(v=>`<p>${escapeHTML(v)}</p>`).join('') || '<p>暂无质量记录</p>'}${q?.truncated ? '<p>质量信息已截断，完整证据见正式日报附件。</p>' : ''}</section><section><h2>日报附件</h2><div class="business-attachments">${links || '尚无正式发布附件'}</div><p class="rt-sub">${escapeHTML(publication?.run_id || '')}</p></section></li>`;
   }
   function controlItem(control) {
     const state = stateOf(CONTROL_STATES, control.status);
@@ -226,7 +228,9 @@ export function initRuntimeUI() {
     }
   }
 
-  async function refresh() {
+  async function refresh(manual = false) {
+    if (manual) { if (querying) return; querying = true; queryFeedback = "正在读取 Worker 状态快照…"; render(); }
+    let succeeded = false;
     try {
       const response = await fetch("/api/runtime", { headers: { accept: "application/json" } });
       if (response.ok) {
@@ -234,12 +238,14 @@ export function initRuntimeUI() {
         workerOnline = Boolean(data.workerOnline);
         snapshot = data.snapshot || null;
         controlError = "";
+        succeeded = true;
       } else { controlError = "状态查询失败，请检查本地 Hub 连接"; }
     } catch { workerOnline = false; controlError = "无法连接本地 Hub，请检查服务是否运行"; }
     try {
       const response = await fetch("/api/runtime/controls", { headers: { accept: "application/json" } });
       if (response.ok) for (const control of await response.json()) upsertControl(control);
     } catch { /* Ignore control list refresh errors. */ }
+    if (manual) { querying = false; queryFeedback = succeeded ? `已查询 · ${formatTime(new Date().toISOString())} · ${workerOnline ? "Worker 在线" : "Worker 离线"} · 快照 ${formatTime(snapshot?.generatedAt)}（不会触发行情更新）` : "查询失败，请检查连接"; }
     render();
   }
 
@@ -281,7 +287,7 @@ export function initRuntimeUI() {
   }
 
   const handleClick = (event) => {
-    if (event.target.closest("[data-refresh]")) { refresh(); return; }
+    if (event.target.closest("[data-refresh]")) { refresh(true); return; }
     const action = event.target.closest("[data-op]");
     if (action && (action.disabled || !workerOnline || snapshotStale())) return;
     if (action) { requestControl(action.dataset.op, action.dataset.target); return; }
