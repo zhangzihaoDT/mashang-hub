@@ -12,6 +12,7 @@ const initialState = { session: null, connected: false, status: "IDLE", workerSt
 let state = initialState;
 const conversations = { service: state, publish: null, aksignal: null };
 let currentWorkspace = 'service';
+let marketComposerCollapsed = localStorage.getItem('aksignal-composer-collapsed') === '1';
 let submitting = false;
 let runtimeSnapshot = null;
 const workspaceCopy = {
@@ -67,11 +68,25 @@ function renderIndependent() {
   const local = url && ['localhost','127.0.0.1','[::1]'].includes(url.hostname);
   $('#independentHint').textContent = !url ? '连接 Worker 后提供工作台入口。页面操作仍由独立系统处理。' : local ? '这是 Worker 本机地址。手机或其他设备需使用已配置的可达地址；Hub 不会自动代理本地页面。' : '在新窗口打开独立 UI，保留当前 Hub 工作空间。服务状态不代表此设备已验证访问。';
 }
+function updateMarketComposer() {
+  const active=currentWorkspace === 'aksignal',collapsed=active && marketComposerCollapsed;
+  $('#composerCollapseBar').classList.toggle('hidden',!active);
+  document.querySelector('.composer').classList.toggle('market-composer-collapsed',collapsed);
+  $('#toggleMarketComposer').textContent=collapsed ? '展开讨论 ▴' : '收起讨论 ▾';
+  $('#toggleMarketComposer').setAttribute('aria-expanded',String(!collapsed));
+}
+$('#toggleMarketComposer').addEventListener('click',()=>{
+  marketComposerCollapsed=!marketComposerCollapsed;
+  localStorage.setItem('aksignal-composer-collapsed',marketComposerCollapsed ? '1':'0');
+  updateMarketComposer();
+  if(!marketComposerCollapsed) $('#prompt').focus();
+});
 function switchWorkspace(kind) {
   if (submitting) return;
   state.draft = $('#prompt').value;
   state.publicationVisibility = $('#publicationVisibility').value; state.publicationStatement = $('#publicationStatement').value;
   currentWorkspace = kind;
+  updateMarketComposer();
   runtimeUI.setWorkspace(kind);
   for (const button of $('#workspaceNav').querySelectorAll('[data-workspace]')) { const active = button.dataset.workspace === kind; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); }
   const conversational = kind === 'service' || kind === 'publish' || kind === 'aksignal';
