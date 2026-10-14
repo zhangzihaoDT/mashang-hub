@@ -115,7 +115,7 @@ try {
   await until(async()=> (await (await fetch(base+'/api/tasks')).json()).some(t=>t.taskId===sent.taskId && ['RESULT','COMPLETED'].includes(t.status)),'read-only response completed');
   console.log('PASS: model selection, pinned full report, quality, all tools denied, conversation response');
 
-  console.log('PASS: fifth domain, real Worker/Python read-only provider, native tick dedupe, SHA256 downloads, quality, mobile, no Agent');
+  console.log('PASS: fifth domain, real Worker/Python read-only provider, native tick dedupe, SHA256 downloads, quality, mobile, no Agent for tick');
   console.log('Screenshots:',join(root,'screenshots'));
 } catch(error) { console.error(logs.join('\n')); throw error; }
 finally {

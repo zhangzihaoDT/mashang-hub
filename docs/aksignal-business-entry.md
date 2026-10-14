@@ -49,3 +49,9 @@ npm run test:aksignal-bridge
 ## 统一对话与运行控制布局
 
 AKsignal 复用 Service/Publish 的对话主区、输入框、模型选择、草稿与独立会话存储键；正式日报事实速览在主区，run-day 的目标日、阶段、补跑、查询、错误、发布结果和附件在同一“运行控制”栏。已移除准备讨论/复制上下文交互。当前模型发送明确禁用，尚未添加任何新外发路径。自动审批审查要求具体日报数据范围与模型服务授权，等待用户选择后再实现真实只读对话；当前 UI 完成不代表 Talk 后端已接通。
+
+## Read-only discussion enabled with user authorization
+
+The user explicitly authorized sending the selected formal report, trade date, run_id and full quality warnings to the model selected in Hub. AKsignal has its own workspace and conversation. Worker accepts only a registered opaque artifact ID, verifies SHA256, receipt, date/run identity and final check, then sends the report text and quality evidence. It sends no raw caches or local paths. Session deny-all permissions are read back and verified; each message also disables every tool. AKsignal bypasses publishing execution. The first question pins a formal batch across reloads; a new conversation selects the latest batch. Missing pinned artifacts fail closed.
+
+Unit, workspace, DOM and actual Hub/Worker/browser plus local mock-model integration passed, including chosen model, full quality evidence, tool denial and completed response. No developer-selected external model request was made. The isolated local preview now uses the existing local model service for user-selected sends; production remains unchanged.
