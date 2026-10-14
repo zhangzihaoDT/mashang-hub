@@ -55,3 +55,9 @@ AKsignal 复用 Service/Publish 的对话主区、输入框、模型选择、草
 The user explicitly authorized sending the selected formal report, trade date, run_id and full quality warnings to the model selected in Hub. AKsignal has its own workspace and conversation. Worker accepts only a registered opaque artifact ID, verifies SHA256, receipt, date/run identity and final check, then sends the report text and quality evidence. It sends no raw caches or local paths. Session deny-all permissions are read back and verified; each message also disables every tool. AKsignal bypasses publishing execution. The first question pins a formal batch across reloads; a new conversation selects the latest batch. Missing pinned artifacts fail closed.
 
 Unit, workspace, DOM and actual Hub/Worker/browser plus local mock-model integration passed, including chosen model, full quality evidence, tool denial and completed response. No developer-selected external model request was made. The isolated local preview now uses the existing local model service for user-selected sends; production remains unchanged.
+
+## Market Snapshot v1
+
+首条样本展示已替换为 AKsignal 只读生成的结构化市场状态摘要。三栏：市场状态（宽基方向、行业阶段广度、ETF 活跃度）；关注方向（已发布强势方向，至少两个行业支撑，按活跃行业数、参与比例、强度和稳定名称排序，不展示股票榜）；重要变化（只比较官方日历上一交易日已核验正式发布，在共同样本、相同来源/状态口径内统计新增/退出趋势与活跃度变化）。底部仅汇总可靠完整360日窗口已有变化，未知/不足排除；低位不视为买入信号。没有上一期正式事实时明确不可比，不借用任意历史缓存。
+
+指标计算、事实定义和正式日报不变；排序是展示优先级，不是 Strategy 或预期收益排名。来源与质量警告继续独立可见。Snapshot 携带当前 tradeDate/runId、previousDate 和版本；Hub 只展示匹配当前正式发布的摘要，不再从 HTML 表首行推断。

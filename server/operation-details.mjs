@@ -8,6 +8,10 @@ export function operationDetails(value) {
   for (const key of ['elapsedSeconds', 'completedSteps', 'totalSteps']) if (Number.isFinite(value[key]) && value[key] >= 0) d[key] = value[key];
   if (typeof value.timezone === 'string') { try { new Intl.DateTimeFormat('en', {timeZone:value.timezone}).format(); d.timezone=value.timezone; } catch {} }
   if (Array.isArray(value.metrics)) d.metrics = value.metrics.slice(0, 32).map(m=>({label:str(m.label,200),value:str(m.value,200)}));
+  if(value.marketSnapshot && typeof value.marketSnapshot === 'object') {
+    const m=value.marketSnapshot;
+    d.marketSnapshot={version:str(m.version,100),tradeDate:str(m.tradeDate,40),runId:str(m.runId,100),previousDate:str(m.previousDate,40),method:str(m.method),sections:Array.isArray(m.sections)?m.sections.slice(0,3).map(s=>({title:str(s.title,100),rows:list(s.rows).slice(0,4)})):[]};
+  }
   if (value.publication) d.publication = {
     run_id: str(value.publication.run_id, 100), trade_date: str(value.publication.trade_date, 40),
     published_at: str(value.publication.published_at, 40),

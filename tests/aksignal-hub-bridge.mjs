@@ -80,7 +80,7 @@ try {
   assert.match(await page.locator('#conversationRuntime').textContent(),/数据不完整/);
   assert.match(await page.locator('#conversationRuntime').textContent(),/124\/124/);
   await page.waitForFunction(()=>document.querySelectorAll('.business-summary article').length===3);
-  assert.match(await page.locator('.business-summary').textContent(), /固定池|趋势分|股票/);
+  assert.match(await page.locator('.business-summary').textContent(), /趋势|ETF/);
   await page.locator('[data-market-question]').first().click();
   await page.locator('#conversationRuntime [data-refresh]').click();
   await page.getByRole('status').filter({hasText:'状态已更新'}).waitFor();
