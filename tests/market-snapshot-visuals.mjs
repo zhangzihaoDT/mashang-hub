@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {breadth,heatmap,distribution,snapshotColumns} from '../public/market-snapshot.js';
+import {operationDetails} from '../server/operation-details.mjs';
+const b={active:182,total:1331,delta:-44,history:[{date:'20261009',active:240,total:1331,basis:'a'},{date:'20261010',active:null,total:null},{date:'20261012',active:226,total:1331,basis:'a'},{date:'20261013',active:182,total:1331,basis:'a'}]};
+assert.equal((breadth(b).match(/<path d=/g)||[]).length,1,'no line across missing day');
+b.history[3].basis='b';assert.equal((breadth(b).match(/<path d=/g)||[]).length,0,'no line across source change');
+assert.match(breadth(b),/13.7%/);assert.match(breadth(b),/↓ 44/);
+const cells=[{code:'x',name:'<script>',group:'电子',strength:90,activeRatio:.8,change:null}];
+assert.ok(!heatmap({industries:cells}).includes('<script>'));
+assert.match(heatmap({industries:cells},'change'),/不可比/);
+assert.match(heatmap({industries:cells},'activeRatio'),/所属一级行业/);
+assert.match(distribution([{label:'趋势形成',count:16},{label:'其他',count:108}]),/124/);
+const clean=operationDetails({marketSnapshot:{visuals:{industries:[{strength:Infinity,activeRatio:2,change:NaN}],breadth:{history:Array(30).fill({active:null})},distribution:[]}}});
+assert.equal(clean.marketSnapshot.visuals.industries[0].strength,null);assert.equal(clean.marketSnapshot.visuals.breadth.history.length,20);
+console.log('Snapshot visuals: true gaps, source changes, unknowns, escaping and bounded protocol passed');

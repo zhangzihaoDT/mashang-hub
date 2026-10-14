@@ -11,6 +11,13 @@ export function operationDetails(value) {
   if(value.marketSnapshot && typeof value.marketSnapshot === 'object') {
     const m=value.marketSnapshot;
     d.marketSnapshot={version:str(m.version,100),tradeDate:str(m.tradeDate,40),runId:str(m.runId,100),previousDate:str(m.previousDate,40),method:str(m.method),sections:Array.isArray(m.sections)?m.sections.slice(0,3).map(s=>({title:str(s.title,100),rows:list(s.rows).slice(0,4)})):[]};
+    if(m.visuals && typeof m.visuals === 'object') {
+      const v=m.visuals, num=(x,min,max)=>Number.isFinite(x) && x>=min && x<=max ? x:null;
+      d.marketSnapshot.visuals={
+        industries:Array.isArray(v.industries)?v.industries.slice(0,200).map(c=>({code:str(c.code,100),name:str(c.name,100),group:str(c.group,100),strength:num(c.strength,0,100),activeRatio:num(c.activeRatio,0,1),change:num(c.change,-100,100)})):[],
+        breadth:{active:num(v.breadth?.active,0,100000),total:num(v.breadth?.total,0,100000),delta:num(v.breadth?.delta,-100000,100000),history:Array.isArray(v.breadth?.history)?v.breadth.history.slice(-20).map(p=>({date:str(p.date,40),active:num(p.active,0,100000),total:num(p.total,0,100000),basis:str(p.basis,400),dataComplete:typeof p.dataComplete==='boolean'?p.dataComplete:null})):[]},
+        distribution:Array.isArray(v.distribution)?v.distribution.slice(0,4).map(p=>({label:str(p.label,100),count:num(p.count,0,100000)??0})):[]};
+    }
   }
   if (value.publication) d.publication = {
     run_id: str(value.publication.run_id, 100), trade_date: str(value.publication.trade_date, 40),

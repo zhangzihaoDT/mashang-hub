@@ -47,7 +47,8 @@
     "test:permissions": "node tests/permissions.mjs && node tests/permissions-bridge.mjs",
     "test:recovery-artifacts": "node tests/task-artifacts.mjs && node tests/recovery-artifacts-bridge.mjs",
     "test:operation-provider": "node tests/json-operation.mjs",
-    "test:aksignal-bridge": "node tests/aksignal-hub-bridge.mjs"
+    "test:aksignal-bridge": "node tests/aksignal-hub-bridge.mjs",
+    "test:snapshot-visuals": "node tests/market-snapshot-visuals.mjs"
   },
   "engines": {
     "node": ">=22.13"

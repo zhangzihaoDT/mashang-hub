@@ -81,6 +81,15 @@ try {
   assert.match(await page.locator('#conversationRuntime').textContent(),/124\/124/);
   await page.waitForFunction(()=>document.querySelectorAll('.business-summary article').length===3);
   assert.match(await page.locator('.business-summary').textContent(), /趋势|ETF/);
+  assert.equal(await page.locator('.heat-cell').count(),124);
+  await page.locator('[data-heat-mode]').selectOption('activeRatio');
+  assert.match(await page.locator('.snapshot-heatmap').textContent(),/所属一级行业/);
+  await page.locator('[data-heat-mode]').selectOption('change');
+  await page.locator('.heat-cell').first().click();
+  assert.match(await page.locator('.heat-info').textContent(),/RPS15/);
+  await page.locator('[data-heat-mode]').selectOption('strength');
+  assert.match(await page.locator('.breadth-chart').textContent(),/近 20 交易日 · 2 日已发布/);
+  assert.match(await page.locator('.state-legend').textContent(),/趋势形成 16/);
   await page.locator('[data-market-question]').first().click();
   await page.locator('#conversationRuntime [data-refresh]').click();
   await page.getByRole('status').filter({hasText:'状态已更新'}).waitFor();
@@ -95,6 +104,7 @@ try {
   assert.equal(record.status,'published');
   await page.locator('#conversationRuntime [data-refresh]').click();
   await mkdir(join(root,'screenshots'));
+  await page.evaluate(()=>document.querySelector('#conversationWorkspace .workspace-runtime').open=false);
   await page.evaluate(()=>document.querySelector('.task-scroll').scrollTop=0);
   assert.equal(await page.locator('.business-batch h2').isVisible(),true);
   await page.screenshot({path:join(root,'screenshots/desktop.png'),fullPage:true});

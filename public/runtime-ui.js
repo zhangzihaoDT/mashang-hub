@@ -1,3 +1,4 @@
+import { snapshotColumns } from "./market-snapshot.js";
 const SERVICE_STATES = {
   ONLINE: { label: "在线", cls: "online" },
   OFFLINE: { label: "离线", cls: "offline" },
@@ -69,6 +70,7 @@ export function initRuntimeUI() {
   let controlError = "";
   let queryFeedback = "";
   let querying = false;
+  let heatMode = "strength";
   let snapshot = null;
   let workerOnline = false;
   const controls = new Map();
@@ -174,7 +176,7 @@ export function initRuntimeUI() {
     const links = (operation.artifacts || []).map(a=>`<a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载 ${a.extension === '.html' ? 'HTML' : 'Markdown'}</a>`).join('');
     const source = q?.status === 'CONFIRMED' ? '来源已确认' : q?.status === 'COMPLETE' ? '包含兜底来源' : '待核验';
     const current = !safe ? workerOnline ? '快照已过期' : 'Worker 离线' : ({PUBLISHED:'已发布',RUNNING:'运行中',WAITING:'等待数据 / 恢复',BLOCKED:'已阻断',IDLE:'尚未运行'})[status] || status;
-    const facts = summary?.sections?.map(section=>`<article><h3>${escapeHTML(section.title)}</h3>${section.rows.map(row=>`<p>${escapeHTML(row)}</p>`).join('')}</article>`).join('');
+    const facts = summary ? snapshotColumns(summary,heatMode) : "";
     return `<li class="business-operation">
       <section class="business-batch"><div class="business-section-head"><h2>市场状态摘要</h2><strong class="business-date">${escapeHTML(pretty(publication?.trade_date))}</strong></div>
         <div class="business-badges"><span class="runtime-state online">${escapeHTML(source)}</span><span class="runtime-state ${q?.data_complete === false ? 'unknown' : 'completed'}">${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'}</span></div>
@@ -305,6 +307,9 @@ export function initRuntimeUI() {
     } catch { /* SSE will reconcile state. */ }
   }
 
+  const marketMount=document.getElementById('marketReport');
+  marketMount?.addEventListener('change',event=>{if(event.target.matches('[data-heat-mode]')){heatMode=event.target.value;render();}});
+  marketMount?.addEventListener('click',event=>{const cell=event.target.closest('[data-heat-info]');if(cell) marketMount.querySelector('.heat-info').textContent=cell.dataset.heatInfo;});
   const handleClick = (event) => {
     if (event.target.closest("[data-refresh]")) { refresh(true); return; }
     const action = event.target.closest("[data-op]");
