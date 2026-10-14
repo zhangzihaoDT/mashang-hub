@@ -1,3 +1,4 @@
+import { operationDetails, operationArtifacts } from "../../server/operation-details.mjs";
 import { collectStatus } from "./status.mjs";
 
 export const RUNTIME_PROTOCOL_VERSION = 1;
@@ -48,6 +49,8 @@ export function snapshotFromStatus(status, { workerId, sequence, generatedAt = n
       ...(typeof operation.group === "string" ? { group: operation.group } : {}),
       ...(typeof operation.description === "string" ? { description: operation.description } : {}),
       enabled: Boolean(operation.enabled),
+      ...(operation.requestOnly ? { requestOnly: true } : {}),
+      ...(operation.details ? { details: operationDetails(operation.details), artifacts: operationArtifacts(operation.artifacts) } : {}),
       ...(operation.requiresSnapshot ? { requiresSnapshot: true } : {}),
       cancellationSupported: operation.cancellationSupported !== false,
       ...(Number.isInteger(operation.timeoutMs) ? { timeoutMs: operation.timeoutMs } : {}),
@@ -64,7 +67,7 @@ export function snapshotFromStatus(status, { workerId, sequence, generatedAt = n
   };
 }
 
-export async function buildRuntimeSnapshot(registry, { workerId, sequence }) {
-  const status = await collectStatus(registry);
+export async function buildRuntimeSnapshot(registry, { workerId, sequence, onArtifacts }) {
+  const status = await collectStatus(registry, { onArtifacts });
   return snapshotFromStatus(status, { workerId, sequence });
 }

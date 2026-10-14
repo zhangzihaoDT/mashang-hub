@@ -74,7 +74,8 @@ function switchWorkspace(kind) {
   runtimeUI.setWorkspace(kind);
   for (const button of $('#workspaceNav').querySelectorAll('[data-workspace]')) { const active = button.dataset.workspace === kind; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); }
   const conversational = kind === 'service' || kind === 'publish';
-  $('#conversationWorkspace').classList.toggle('hidden', !conversational); $('#independentWorkspace').classList.toggle('hidden', conversational);
+  $('#conversationWorkspace').classList.toggle('hidden', !conversational); $('#independentWorkspace').classList.toggle('hidden', conversational || kind === 'aksignal'); $('#businessWorkspace').classList.toggle('hidden', kind !== 'aksignal');
+  if (kind === 'aksignal') return;
   if (!conversational) { renderIndependent(); return; }
   if (!conversations[kind]) conversations[kind] = { ...initialState, session:null, activeTaskId:null, turnId:null, taskState:'IDLE', status:'IDLE', turnActive:false, messages:[], artifacts:[], assistantText:'', pendingPermission:null, confirmationId:null, earlyEvents:[], draft:'', taskTitle:null, sessionPromise:null, openCodeSessionId:null, resultPlainText:false, startedAt:null, finishedAt:null };
   const previous = state; state = conversations[kind];

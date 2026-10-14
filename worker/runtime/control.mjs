@@ -21,6 +21,10 @@ export function findOperation(registry, id) {
 }
 
 const activeOperations = new Set();
+function operationBusy(operation, registry) {
+  return activeOperations.has(operation.id) || (!operation.requestOnly &&
+    [...activeOperations].some(id => !findOperation(registry, id)?.requestOnly));
+}
 
 function runToCompletion(spec, { stdio = "inherit", signal } = {}) {
   return new Promise((resolve) => {
@@ -268,7 +272,7 @@ export async function run(job, registry, { log = console, signal } = {}) {
 export async function runOperation(operation, registry, { log = console, signal, onStatus } = {}) {
   const spec = operation.run;
   if (!operation.enabled || !spec) throw new Error(`operation '${operation.id}' is not executable`);
-  if (activeOperations.size > 0) return { status: "busy", code: null };
+  if (operationBusy(operation, registry)) return { status: "busy", code: null };
   activeOperations.add(operation.id);
   const stateDir = registry.runtimeDir;
   const startedAt = new Date().toISOString();
@@ -310,12 +314,12 @@ export async function executeControl(registry, { op, targetId, signal, log = con
     const operation = findOperation(registry, targetId);
     if (operation) {
       if (!operation.enabled || !operation.run) return { status: "REFUSED", reason: "OPERATION_DISABLED" };
-      if (activeOperations.size > 0) return { status: "REFUSED", reason: "OPERATION_BUSY" };
+      if (operationBusy(operation, registry)) return { status: "REFUSED", reason: "OPERATION_BUSY" };
       const result = await runOperation(operation, registry, { log, signal, onStatus: onOperationStatus });
       if (result.status === "cancelled") return { status: "CANCELLED", reason: "CANCELLED" };
       if (result.status === "busy") return { status: "REFUSED", reason: "OPERATION_BUSY" };
       return result.status === "completed"
-        ? { status: "COMPLETED", reason: "OK", code: result.code ?? null }
+        ? { status: "COMPLETED", reason: operation.requestOnly ? "REQUEST_HANDLED" : "OK", code: result.code ?? null }
         : { status: "FAILED", reason: "OPERATION_FAILED", code: result.code ?? null };
     }
     const job = findJob(registry, targetId);

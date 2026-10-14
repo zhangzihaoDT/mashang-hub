@@ -311,7 +311,9 @@ async function publishRuntimeSnapshot() {
   runtimePublishing = true;
   try {
     runtimeSequence += 1;
-    send(await buildRuntimeSnapshot(runtimeRegistry, { workerId, sequence: runtimeSequence }));
+    send(await buildRuntimeSnapshot(runtimeRegistry, { workerId, sequence: runtimeSequence,
+      onArtifacts: items => { for (const artifact of items) localArtifacts.set(artifact.artifactId, artifact); },
+    }));
   } catch (error) {
     console.log(`runtime snapshot failed: ${error.message}`);
   } finally {

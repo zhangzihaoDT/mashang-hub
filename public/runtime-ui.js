@@ -11,6 +11,9 @@ const JOB_STATES = {
 };
 const OPERATION_STATES = {
   ...JOB_STATES,
+  WAITING: { label: "WAITING · 等待", cls: "unknown" },
+  BLOCKED: { label: "BLOCKED · 阻断", cls: "failed" },
+  PUBLISHED: { label: "PUBLISHED · 已发布", cls: "completed" },
   IDLE: { label: "尚未运行", cls: "unknown" },
   CANCELLED: { label: "已取消", cls: "failed" },
 };
@@ -39,11 +42,11 @@ function escapeHTML(value = "") {
 }
 function stateOf(map, key) { return map[key] || map.UNKNOWN; }
 function opLabel(op) { return ({ up: "Up", down: "Down", restart: "Restart", run: "Run" })[op] || op; }
-function formatTime(value) {
+function formatTime(value, timezone) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return date.toLocaleString("zh-CN", { ...(timezone ? { timeZone: timezone } : {}), hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 function formatClockTime(value) {
   if (!value) return "—";
@@ -61,6 +64,7 @@ function formatClockTime(value) {
 export function initRuntimeUI() {
   const conversationMount = document.getElementById("conversationRuntime");
   const independentMount = document.getElementById("independentRuntime");
+  const businessMount = document.getElementById("businessRuntime");
   let workspace = "service";
   let controlError = "";
   let snapshot = null;
@@ -145,7 +149,28 @@ export function initRuntimeUI() {
     ].filter(Boolean).join(" · ");
     const description = operation.description ? `<span class="rt-sub">${escapeHTML(operation.description)}</span>` : "";
     const actions = operation.enabled && !operation.requiresSnapshot ? actionButtons(["run"], operation.id) : "";
-    return `<li class="rt-item"><span class="rt-dot ${state.cls}"></span><div class="rt-main"><strong>${escapeHTML(operation.label || operation.id)}</strong><span class="rt-sub">${detail}</span>${description}</div><div class="rt-actions">${actions}</div></li>`;
+    const business = operation.details || {};
+    const quality = business.quality;
+    const facts = [business.targetDate ? `目标日期 ${business.targetDate}` : "",
+      business.elapsedSeconds != null ? `运行 ${business.elapsedSeconds} 秒` : "",
+      business.phase || "", business.totalSteps ? `${business.completedSteps}/${business.totalSteps}` : ""].filter(Boolean).join(" · ");
+    const publication = business.publication ? `<span class="rt-sub">最新正式日报 · ${escapeHTML(business.publication.trade_date)} · ${escapeHTML(business.publication.run_id)}</span>` : "";
+    const warnings = quality ? `<span class="rt-sub">数据质量 ${escapeHTML(quality.status)} · data_complete=${escapeHTML(quality.data_complete)}</span>${[...(quality.warnings || []), ...(quality.errors || [])].map(v=>`<span class="rt-sub">${escapeHTML(v)}</span>`).join("")}` : "";
+    const attachments = (operation.artifacts || []).map(a=>`<span class="rt-sub">${escapeHTML(a.name)} <a href="/api/artifacts/content?artifactId=${encodeURIComponent(a.artifactId)}" target="_blank" rel="noopener">预览</a> <a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载</a></span>`).join("");
+    const feedback = business.error ? `<span class="rt-sub">${escapeHTML(business.error)}</span>` : "";
+    const retry = business.retryAt ? `<span class="rt-sub">下次可重试 ${escapeHTML(formatTime(business.retryAt))}</span>` : "";
+    return `<li class="rt-item"><span class="rt-dot ${state.cls}"></span><div class="rt-main"><strong>${escapeHTML(operation.label || operation.id)}</strong><span class="rt-sub">${detail}</span>${description}<span class="rt-sub">${escapeHTML(facts)}</span>${feedback}${retry}${publication}${warnings}${attachments}</div><div class="rt-actions">${actions}</div></li>`;
+  }
+  function businessItem(operation) {
+    const d = operation.details || {}, q = d.quality, publication = d.publication;
+    const safe = workerOnline && !snapshotStale();
+    const latestDate = publication?.trade_date || "—";
+    const date = /^\d{8}$/.test(latestDate) ? `${latestDate.slice(0,4)}-${latestDate.slice(4,6)}-${latestDate.slice(6)}` : latestDate;
+    const status = operation.lastRun?.status || "UNKNOWN";
+    const warnings = [...(q?.warnings || []), ...(q?.errors || [])];
+    const html = (operation.artifacts || []).find(a=>a.extension === ".html");
+    const links = (operation.artifacts || []).map(a=>`<span>${escapeHTML(a.name)} <a href="/api/artifacts/content?artifactId=${encodeURIComponent(a.artifactId)}" target="_blank" rel="noopener">预览</a> <a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载</a></span>`).join("");
+    return `<li class="business-operation"><section class="business-batch"><span class="rt-sub">最新正式业务批次</span><h2>${escapeHTML(date)}</h2><span class="runtime-state ${q?.data_complete === false ? 'unknown' : 'completed'}">${escapeHTML(q?.status || '尚无正式发布')} · ${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'}</span><p>发布于 ${escapeHTML(formatTime(publication?.published_at, d.timezone))}</p><dl class="runtime-facts">${(d.metrics || []).map(m=>`<div><dt>${escapeHTML(m.label)}</dt><dd>${escapeHTML(m.value)}</dd></div>`).join('')}<div><dt>当前目标交易日</dt><dd>${escapeHTML(d.targetDate || '—')}</dd></div><div><dt>业务状态</dt><dd>${escapeHTML(safe ? status : workerOnline ? '快照已过期' : 'Worker Offline')}</dd></div><div><dt>运行时间</dt><dd>${escapeHTML(d.elapsedSeconds ?? '—')} 秒</dd></div><div><dt>数据完整性</dt><dd>${q?.data_complete === false ? '未通过' : q?.data_complete === true ? '通过' : '未知'} · data_complete=${escapeHTML(q?.data_complete ?? 'unknown')}</dd></div><div><dt>当前阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div></dl>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}${d.retryAt ? `<p>下次可重试 ${escapeHTML(formatTime(d.retryAt))}</p>` : ''}</section><section><h2>业务操作</h2><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled ? 'disabled' : ''}>手动补跑</button><button class="rt-btn" data-refresh="1">查询状态</button>${html ? `<a class="rt-btn" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看日报</a>` : ''}</div><p class="rt-sub">${escapeHTML(operation.description || '')}</p></section><section><h2>数据质量 · ${escapeHTML(publication?.trade_date || "待验收")}</h2>${warnings.map(v=>`<p>${escapeHTML(v)}</p>`).join('') || '<p>暂无质量记录</p>'}${q?.truncated ? '<p>质量信息已截断，完整证据见正式日报附件。</p>' : ''}</section><section><h2>日报附件</h2><div class="business-attachments">${links || '尚无正式发布附件'}</div><p class="rt-sub">${escapeHTML(publication?.run_id || '')}</p></section></li>`;
   }
   function controlItem(control) {
     const state = stateOf(CONTROL_STATES, control.status);
@@ -155,7 +180,7 @@ export function initRuntimeUI() {
     const title = control.status === "RUNNING"
       ? `${target} · ${OP_PROGRESS[control.op] || state.label}`
       : control.status === "AWAITING_PERMISSION" ? target : `${control.op} · ${target}`;
-    const sub = control.status === "AWAITING_PERMISSION" ? "需要确认" : active ? "" : state.label;
+    const sub = control.status === "AWAITING_PERMISSION" ? "需要确认" : active ? "" : control.status === "COMPLETED" && targetOperation?.requestOnly ? "检查请求已处理，请查看业务状态" : state.label;
     const reason = control.reason && control.status !== "COMPLETED" ? escapeHTML(control.reason) : "";
     const detail = [sub, reason, !active ? `历史操作 · ${formatTime(control.updatedAt || control.createdAt)}` : ""].filter(Boolean).join(" · ");
     let actions = "";
@@ -172,11 +197,11 @@ export function initRuntimeUI() {
     const services = snapshot?.services || [];
     const jobs = snapshot?.jobs || [];
     const operations = snapshot?.operations || [];
-    const mount = ["fetch", "knbase"].includes(workspace) ? independentMount : conversationMount;
+    const mount = workspace === "aksignal" ? businessMount : ["fetch", "knbase"].includes(workspace) ? independentMount : conversationMount;
     if (mount) {
       // Older Workers may omit workspace metadata. Only presentation uses these legacy IDs/groups.
       const belongs = item => (item.workspace || ({fetch:"fetch",myknbase:"knbase"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
-      const entries = [...services.filter(belongs).map(mount === independentMount ? workspaceServiceItem : serviceItem), ...jobs.filter(belongs).map(jobItem), ...operations.filter(belongs).map(operationItem)];
+      const entries = [...services.filter(belongs).map(mount === independentMount ? workspaceServiceItem : serviceItem), ...jobs.filter(belongs).map(jobItem), ...operations.filter(belongs).map(mount === businessMount ? businessItem : operationItem)];
       if (mount === independentMount) {
         const service = services.find(belongs);
         const badge = document.getElementById("independentStatus");
@@ -197,7 +222,7 @@ export function initRuntimeUI() {
       if (historyOpen && mount.querySelector(".runtime-history")) mount.querySelector(".runtime-history").open = true;
       if (detailsOpen && mount.querySelector(".runtime-diagnostics")) mount.querySelector(".runtime-diagnostics").open = true;
       if (actions.some(item=>item.status === "AWAITING_PERMISSION") && mount === conversationMount) mount.closest("details").open = true;
-      if (!workerOnline || (mount === independentMount && snapshotStale())) for (const button of mount.querySelectorAll("button")) button.disabled = true;
+      if (!workerOnline || snapshotStale()) for (const button of mount.querySelectorAll("button")) button.disabled = true;
     }
   }
 
@@ -255,15 +280,16 @@ export function initRuntimeUI() {
   }
 
   const handleClick = (event) => {
+    if (event.target.closest("[data-refresh]")) { refresh(); return; }
     const action = event.target.closest("[data-op]");
-    if (action && (action.disabled || !workerOnline || (event.currentTarget === independentMount && snapshotStale()))) return;
+    if (action && (action.disabled || !workerOnline || snapshotStale())) return;
     if (action) { requestControl(action.dataset.op, action.dataset.target); return; }
     const decision = event.target.closest("[data-decision]");
     if (decision) { decide(decision.dataset.control, decision.dataset.decision === "approve"); return; }
     const cancel = event.target.closest("[data-cancel]");
     if (cancel) cancelControl(cancel.dataset.control);
   };
-  for (const mount of [conversationMount, independentMount].filter(Boolean)) mount.addEventListener("click", handleClick);
+  for (const mount of [conversationMount, independentMount, businessMount].filter(Boolean)) mount.addEventListener("click", handleClick);
   const interval = window.setInterval(refresh, 15000);
   refresh();
 

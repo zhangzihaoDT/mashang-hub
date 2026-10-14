@@ -16,7 +16,7 @@ assert.deepEqual(ids, ["fetch", "myknbase", "scheduler"]);
 assert.equal(registry.services.length, 3);
 assert.deepEqual(registry.dependencies.map((dependency) => dependency.id), ["opencode"]);
 assert.equal(registry.jobs.length, 0);
-assert.deepEqual(registry.operations.map((operation) => operation.id), ["daily", "allupdate"]);
+assert.deepEqual(registry.operations.map((operation) => operation.id), ["aksignal-daily", "daily", "allupdate"]);
 const daily = registry.operations.find((operation) => operation.id === "daily");
 assert.equal(daily.label, "Daily pipeline");
 assert.equal(daily.group, "MASHANG-SERVICE");
@@ -79,7 +79,7 @@ assert.equal(fetch.probe.type, "http");
 assert.ok(overridden.services.some((s) => s.id === "extra"));
 assert.equal(overridden.services.length, 4);
 assert.equal(overridden.jobs.length, 0);
-assert.equal(overridden.operations.length, 3);
+assert.equal(overridden.operations.length, 4);
 assert.ok(overridden.operations.some((operation) => operation.id === "future-no-arg"), "Worker config can add an operation without a Hub mapping");
 
 console.log("Runtime registry checks passed");

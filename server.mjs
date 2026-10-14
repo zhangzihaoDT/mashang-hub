@@ -2,7 +2,7 @@ import { approvalProof } from './server/operation-proof.mjs';
 import { executionPolicy, executionTimes } from "./server/task-policy.mjs";
 import { TaskStore } from "./server/task-store.mjs";
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -270,9 +270,12 @@ function onWorkerMessage(message) {
   }
   if (message.type === "runtime.snapshot") {
     const snapshot = sanitizeRuntimeSnapshot(message);
-    if (!snapshot || (snapshot.sequence !== null && snapshot.sequence <= runtimeSnapshotSequence)) return;
+    if (!snapshot || snapshot.workerId !== activeWorker?.workerId || (snapshot.sequence !== null && snapshot.sequence <= runtimeSnapshotSequence)) return;
     runtimeSnapshotSequence = snapshot.sequence ?? runtimeSnapshotSequence;
     runtimeSnapshot = snapshot;
+    for (const operation of snapshot.operations) for (const artifact of operation.artifacts || []) {
+      artifacts.set(artifact.artifactId, { ...artifact, operationId: operation.id, workerId: snapshot.workerId });
+    }
     runtimeReceivedAt = new Date().toISOString();
     broadcast({ type: "runtime.snapshot", workerOnline: Boolean(activeWorker), receivedAt: runtimeReceivedAt, snapshot });
     return;
@@ -428,6 +431,7 @@ async function requestArtifact(req, res, download) {
   const artifactId = new URL(req.url, "http://localhost").searchParams.get("artifactId");
   const artifact = artifacts.get(artifactId);
   if (!artifact) return json(res, 404, { error: "Artifact not found" });
+  if (artifact.workerId && artifact.workerId !== activeWorker?.workerId) return json(res, 503, { error: "Artifact owner Worker is unavailable" });
   const requestId = randomUUID();
   const result = new Promise((resolve, reject) => { const timer = setTimeout(() => { pendingArtifacts.delete(requestId); reject(new Error("Worker artifact request timed out")); }, 30000); pendingArtifacts.set(requestId, { resolve: (value) => { clearTimeout(timer); resolve(value); }, reject }); });
   console.log(`artifact requested: ${artifactId}`);
@@ -435,6 +439,9 @@ async function requestArtifact(req, res, download) {
   try {
     const response = await result;
     if (response.error) return json(res, 404, { error: response.error });
+    if (artifact.digest && createHash('sha256').update(Buffer.from(response.contentBase64 || '', 'base64')).digest('hex') !== artifact.digest) {
+      return json(res, 409, { error: 'Artifact changed since publication' });
+    }
     const headers = { "content-type": response.contentType, "content-disposition": `${download ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(response.filename)}`, "x-content-type-options": "nosniff" };
     if (!download && artifact.extension === ".html") headers["content-security-policy"] = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-src 'none'; base-uri 'none'; form-action 'none'";
     res.writeHead(200, headers); res.end(Buffer.from(response.contentBase64, "base64"));

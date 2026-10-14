@@ -37,7 +37,7 @@ try{
  await page.route('**/api/runtime/control',async route=>{assert.deepEqual(route.request().postDataJSON(),{op:'restart',targetId:'fetch'});await route.fulfill({json:{controlId:'ui-control',targetId:'fetch',op:'restart',status:'AWAITING_PERMISSION'}});});
  await page.route('**/api/runtime/controls/ui-control/decision',async route=>{assert.equal(route.request().postDataJSON().approve,false);await route.fulfill({json:{}});});
  await page.goto(base);await page.waitForFunction(()=>!document.querySelector('#send').disabled);
- assert.equal(await page.locator('.workspace-tab').count(),4);
+ assert.equal(await page.locator('.workspace-tab').count(),5);
  assert.equal(await page.locator('#resultBody').isVisible(),false,'idle conversation must not show an empty result');
  const nav=await page.locator('#workspaceNav').boundingBox(),area=await page.locator('.workspace-area').boundingBox();
  assert.ok(nav.x+nav.width<=area.x,'navigation must sit to the left of the workspace');

@@ -170,6 +170,16 @@ export function buildRegistry(env = process.env, config = null) {
     ],
     jobs: [],
     operations: [
+      {
+        id: "aksignal-daily", workspace: "aksignal", label: "AKsignal Daily", group: "AKSIGNAL",
+        description: "手动检查与补跑市场观察；请求完成不等于日报已发布。自动调度保持独立开关。",
+        enabled: true, cancellationSupported: false, requestOnly: true, timeoutMs: 60000,
+        probe: { type: "command-json", command: join(env.MASHANG_AKSIGNAL_ROOT || join(homedir(), "Documents/github/AKsignal"), ".venv/bin/python"),
+          args: ["-m", "src.daily_hub"], cwd: env.MASHANG_AKSIGNAL_ROOT || join(homedir(), "Documents/github/AKsignal"),
+          artifactRoot: join(env.MASHANG_AKSIGNAL_ROOT || join(homedir(), "Documents/github/AKsignal"), ".run_day/runs") },
+        run: { command: join(env.MASHANG_AKSIGNAL_ROOT || join(homedir(), "Documents/github/AKsignal"), ".venv/bin/python"),
+          args: ["-m", "src.daily_schedule", "--tick"], cwd: env.MASHANG_AKSIGNAL_ROOT || join(homedir(), "Documents/github/AKsignal") },
+      },
       ...((env.MASHANG_PUBLISH_SERVICE_URL || env.MASHANG_PUBLISH_DIRECT === '1') ? [{ id: 'text-publication', workspace: 'publish', label: '微博文本发布', description: '审阅不可变正文后明确授权；结果不确定时只核验。', enabled: true, requiresSnapshot: true, cancellationSupported: false, timeoutMs: 60000 }] : []),
       {
         id: "daily",

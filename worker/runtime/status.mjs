@@ -1,3 +1,4 @@
+import { readJsonOperation } from "./json-operation.mjs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { httpProbe, processProbe, isPidAlive, findProcesses } from "./probes.mjs";
@@ -102,11 +103,12 @@ export async function collectStatus(registry, options = {}) {
   );
 
   const operations = await Promise.all((registry.operations || []).map(async (operation) => {
+    const provider = operation.probe?.type === "command-json" ? await readJsonOperation(operation.probe, options) : null;
     const scheduled = operation.probe?.type === "scheduler-log"
       ? await readDailyJob(operation.probe)
       : null;
     const manual = await readManualOperation(registry.runtimeDir, operation.id);
-    const result = pickLatestRun(scheduled, manual) || { status: "IDLE" };
+    const result = provider?.lastRun || pickLatestRun(scheduled, manual) || { status: "IDLE" };
     return {
       id: operation.id,
       workspace: operation.workspace ?? null,
@@ -114,6 +116,8 @@ export async function collectStatus(registry, options = {}) {
       group: operation.group ?? null,
       description: operation.description || "",
       enabled: operation.enabled !== false && Boolean(operation.run || operation.requiresSnapshot),
+      ...(provider ? { details: provider.details, artifacts: provider.artifacts } : {}),
+      ...(operation.requestOnly ? { requestOnly: true } : {}),
       requiresSnapshot: operation.requiresSnapshot === true,
       cancellationSupported: operation.cancellationSupported !== false,
       timeoutMs: Number.isInteger(operation.timeoutMs) ? operation.timeoutMs : null,

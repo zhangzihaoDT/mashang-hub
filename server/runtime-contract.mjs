@@ -1,8 +1,10 @@
+import { operationDetails, operationArtifacts } from "./operation-details.mjs";
+
 export const RUNTIME_PROTOCOL_VERSION = 1;
 const SERVICE_STATUS = new Set(["ONLINE", "OFFLINE", "UNKNOWN"]);
 const DEPENDENCY_STATUS = new Set(["ONLINE", "OFFLINE", "UNKNOWN"]);
 const JOB_STATUS = new Set(["COMPLETED", "FAILED", "RUNNING", "UNKNOWN"]);
-const OPERATION_STATUS = new Set(["IDLE", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]);
+const OPERATION_STATUS = new Set(["WAITING", "BLOCKED", "PUBLISHED", "IDLE", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]);
 const MAX_ENTRIES = 128;
 const MAX_STRING = 200;
 const MAX_OPERATION_TIMEOUT_MS = 3600000;
@@ -102,6 +104,8 @@ export function sanitizeRuntimeSnapshot(message) {
         id,
         label: shortString(operation.label) || id,
         enabled: Boolean(operation.enabled),
+        ...(operation.requestOnly ? { requestOnly: true } : {}),
+        ...(operation.details ? { details: operationDetails(operation.details), artifacts: operationArtifacts(operation.artifacts) } : {}),
         ...(operation.requiresSnapshot === true ? { requiresSnapshot: true } : {}),
         cancellationSupported: operation.cancellationSupported !== false,
         lastRun: {

@@ -45,7 +45,9 @@
     "test:publication-operation": "node tests/publication-operation.mjs && node tests/publication-operation-bridge.mjs && node tests/publication-direct.mjs",
     "test:opencode-cancellation": "node tests/opencode-execution.mjs && node tests/opencode-cancellation-bridge.mjs",
     "test:permissions": "node tests/permissions.mjs && node tests/permissions-bridge.mjs",
-    "test:recovery-artifacts": "node tests/task-artifacts.mjs && node tests/recovery-artifacts-bridge.mjs"
+    "test:recovery-artifacts": "node tests/task-artifacts.mjs && node tests/recovery-artifacts-bridge.mjs",
+    "test:operation-provider": "node tests/json-operation.mjs",
+    "test:aksignal-bridge": "node tests/aksignal-hub-bridge.mjs"
   },
   "engines": {
     "node": ">=22.13"

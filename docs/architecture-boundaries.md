@@ -2,6 +2,12 @@
 
 本文档是 `mashang-hub` 与 `mashang-service` 之间的长期架构边界定义。
 
+## 业务入口与共享运行能力
+
+业务入口按领域划分，运行基础设施统一复用。Service、Fetch、Knbase、Publish、AKsignal 是同级业务区域；复用 Service Scheduler 不构成 AKsignal 对 Service 的业务归属。
+
+AKsignal 的 Runner、行情、检查点与日报归独立 AKsignal 仓库。Worker 注册确定性业务操作，Hub 仅展示通用运行字段和附件。AKsignal 区域不创建专属 Agent；当前只接入 Market Facts，组合状态与策略能力仍未实现。Scheduler 暂保留在 Service 中作为共享触发能力，不为此次接入拆分新 Scheduler、数据库或执行体系。
+
 ## Core Rule
 
 ```text
