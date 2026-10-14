@@ -71,6 +71,7 @@ export function initRuntimeUI() {
   let queryFeedback = "";
   let querying = false;
   let heatMode = "strength";
+  let reportMarkup = "";
   let snapshot = null;
   let workerOnline = false;
   const controls = new Map();
@@ -240,7 +241,17 @@ export function initRuntimeUI() {
       for (const cls of openedBusiness) { const el=mount.querySelector("."+cls); if(el) el.open=true; }
       if(workspace === 'aksignal') {
         const report=document.getElementById('marketReport'), batch=mount.querySelector('.business-batch');
-        if(report && batch) { report.replaceChildren(batch); report.classList.remove('hidden'); }
+        if(report && batch) {
+          const nextMarkup=batch.innerHTML;
+          if(nextMarkup !== reportMarkup) {
+            const openEvidence=[...report.querySelectorAll('.snapshot-evidence')].map(e=>e.open);
+            const modeFocused=document.activeElement?.matches('[data-heat-mode]');
+            report.replaceChildren(batch); reportMarkup=nextMarkup;
+            [...report.querySelectorAll('.snapshot-evidence')].forEach((e,i)=>e.open=Boolean(openEvidence[i]));
+            if(modeFocused) report.querySelector('[data-heat-mode]')?.focus();
+          } else { batch.remove(); }
+          report.classList.remove('hidden');
+        }
       }
       if (historyOpen && mount.querySelector(".runtime-history")) mount.querySelector(".runtime-history").open = true;
       if (detailsOpen && mount.querySelector(".runtime-diagnostics")) mount.querySelector(".runtime-diagnostics").open = true;

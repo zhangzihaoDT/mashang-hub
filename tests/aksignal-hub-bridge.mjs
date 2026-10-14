@@ -82,6 +82,11 @@ try {
   await page.waitForFunction(()=>document.querySelectorAll('.business-summary article').length===3);
   assert.match(await page.locator('.business-summary').textContent(), /趋势|ETF/);
   assert.equal(await page.locator('.heat-cell').count(),124);
+  await page.locator('[data-heat-mode]').evaluate(e=>{window.originalHeatSelect=e;});
+  await page.waitForTimeout(1500);
+  assert.equal(await page.locator('[data-heat-mode]').evaluate(e=>e===window.originalHeatSelect),true,'status snapshots preserve dropdown node');
+  assert.equal(await page.locator('[data-heat-mode]').count(),1);
+
   await page.locator('[data-heat-mode]').selectOption('activeRatio');
   assert.match(await page.locator('.snapshot-heatmap').textContent(),/所属一级行业/);
   await page.locator('[data-heat-mode]').selectOption('change');
