@@ -4,10 +4,23 @@ const list = v => Array.isArray(v) ? v.filter(x => typeof x === 'string').slice(
 export function operationDetails(value) {
   if (!value || typeof value !== 'object') return undefined;
   const d = {};
-  for (const key of ['targetDate', 'runId', 'phase', 'error', 'reason', 'retryAt']) if (str(value[key])) d[key] = str(value[key]);
+  for (const key of ['targetDate', 'scheduledTargetDate', 'runId', 'phase', 'error', 'reason', 'retryAt', 'triggerSource']) if (str(value[key])) d[key] = str(value[key]);
   for (const key of ['elapsedSeconds', 'completedSteps', 'totalSteps']) if (Number.isFinite(value[key]) && value[key] >= 0) d[key] = value[key];
   if (typeof value.timezone === 'string') { try { new Intl.DateTimeFormat('en', {timeZone:value.timezone}).format(); d.timezone=value.timezone; } catch {} }
   if (Array.isArray(value.metrics)) d.metrics = value.metrics.slice(0, 32).map(m=>({label:str(m.label,200),value:str(m.value,200)}));
+  if (value.schedule && typeof value.schedule === 'object') {
+    const s = value.schedule;
+    d.schedule = {
+      enabled: typeof s.enabled === 'boolean' ? s.enabled : null,
+      agentStatus: str(s.agentStatus, 40), lastCheckedAt: str(s.lastCheckedAt, 40),
+      heartbeatAgeSeconds: Number.isFinite(s.heartbeatAgeSeconds) ? Math.max(0, s.heartbeatAgeSeconds) : null,
+      nextScheduledAt: str(s.nextScheduledAt, 40), lastOccurrenceAt: str(s.lastOccurrenceAt, 40),
+      lastOccurrenceStatus: str(s.lastOccurrenceStatus, 40),
+      lastOccurrenceTradeDate: str(s.lastOccurrenceTradeDate, 40),
+      manualPendingCount: Number.isInteger(s.manualPendingCount) ? Math.max(0, s.manualPendingCount) : 0,
+      missedPolicy: s.missedPolicy === 'manual_only' ? 'manual_only' : null,
+    };
+  }
   if(value.marketSnapshot && typeof value.marketSnapshot === 'object') {
     const m=value.marketSnapshot;
     d.marketSnapshot={version:str(m.version,100),tradeDate:str(m.tradeDate,40),runId:str(m.runId,100),previousDate:str(m.previousDate,40),method:str(m.method),sections:Array.isArray(m.sections)?m.sections.slice(0,3).map(s=>({title:str(s.title,100),rows:list(s.rows).slice(0,4)})):[]};

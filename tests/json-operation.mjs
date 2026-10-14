@@ -24,6 +24,9 @@ try {
   assert.equal(v.lastRun.status, 'PUBLISHED');
   assert.equal(registered.length, 1);
   assert.equal(operationDetails(v.details).quality.data_complete, false);
+  assert.deepEqual(operationDetails({schedule:{enabled:false,agentStatus:'OFFLINE',missedPolicy:'manual_only',secret:'/private'}}).schedule,
+    {enabled:false,agentStatus:'OFFLINE',lastCheckedAt:null,heartbeatAgeSeconds:null,nextScheduledAt:null,
+      lastOccurrenceAt:null,lastOccurrenceStatus:null,lastOccurrenceTradeDate:null,manualPendingCount:0,missedPolicy:'manual_only'});
   assert.equal(JSON.stringify(operationDetails(v.details)).includes('not-public'), false);
   const metadata = operationArtifacts(v.artifacts);
   assert.equal(metadata.length, 1);
@@ -36,10 +39,12 @@ try {
   await rm(external);
   const op = buildRegistry({ MASHANG_AKSIGNAL_ROOT: root }).operations.find(o=>o.id==='aksignal-daily');
   assert.equal(op.workspace, 'aksignal');
-  assert.deepEqual(op.run.args, ['-m','src.daily_schedule','--tick']);
+  assert.deepEqual(op.run.args, ['-m','src.daily_schedule','--manual-run']);
   assert.equal(op.requestOnly, true);
   assert.equal(op.cancellationSupported, false);
   assert.ok(!op.run.args.includes('--restart'));
+  const maintenance = buildRegistry({ MASHANG_AKSIGNAL_ROOT: root }).operations.find(o=>o.id==='aksignal-daily-maintenance-restart');
+  assert.deepEqual(maintenance.run.args, ['-m','src.daily_schedule','--manual-run','--restart']);
   const registry = {runtimeDir:join(root,'runtime'),services:[],jobs:[],operations:[
     {id:'long-business',enabled:true,run:{command:process.execPath,args:['-e','setTimeout(()=>{},400)']}},
     {id:'short-trigger',enabled:true,requestOnly:true,run:{command:process.execPath,args:['-e','process.exit(0)']}},

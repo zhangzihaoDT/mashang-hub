@@ -13,6 +13,8 @@ const JOB_STATES = {
 const OPERATION_STATES = {
   ...JOB_STATES,
   WAITING: { label: "WAITING · 等待", cls: "unknown" },
+  MISSED: { label: "MISSED · 错过计划，待手动运行", cls: "unknown" },
+  FAILED: { label: "FAILED · 运行失败，待手动恢复", cls: "failed" },
   BLOCKED: { label: "BLOCKED · 阻断", cls: "failed" },
   PUBLISHED: { label: "PUBLISHED · 已发布", cls: "completed" },
   IDLE: { label: "尚未运行", cls: "unknown" },
@@ -126,15 +128,16 @@ export function initRuntimeUI() {
   function workspaceServiceItem(service) {
     const stale = snapshotStale();
     const safe = workerOnline && !stale;
+    const aksignal = service.workspace === "aksignal";
     const status = !workerOnline ? "Worker Offline" : stale ? "快照已过期" : service.status || "UNKNOWN";
     const online = safe && service.status === "ONLINE", offline = safe && service.status === "OFFLINE";
     let url = null; try { const candidate = new URL(service.openUrl); if (["http:","https:"].includes(candidate.protocol) && !candidate.username && !candidate.password) url = candidate; } catch {}
     const local = url && ["localhost","127.0.0.1","[::1]"].includes(url.hostname);
     const statusClass = online ? "online" : offline ? "offline" : "unknown";
-    const main = online && url ? `<a class="rt-btn runtime-primary" href="${escapeHTML(url.href)}" target="_blank" rel="noopener noreferrer">打开工作台 ↗</a>` : offline ? `<button class="rt-btn runtime-primary" data-op="up" data-target="${escapeHTML(service.id)}">启动服务</button>` : "";
-    const secondary = online ? actionButtons(["restart","down"],service.id).replace('>Restart<','>重启服务<').replace('>Down<','>停止服务<') : "";
-    const feedback = !workerOnline ? "Worker 离线，连接恢复后才能控制服务。" : stale ? "运行快照已过期，等待新状态后再操作。" : online ? url ? "服务探测通过，可在新窗口打开工作台。" : "服务探测通过，但 Worker 尚未提供工作台地址。" : offline ? "服务探测未通过，可请求启动或展开运行详情诊断。" : "服务状态未知，等待可靠状态后再操作。";
-    return `<li class="workspace-service compact-service"><div class="runtime-section-head"><h2>服务控制</h2><span class="runtime-state ${statusClass}"><span class="runtime-status-dot" aria-hidden="true"></span>${escapeHTML(status)}</span></div><p class="runtime-feedback">${feedback}</p><div class="rt-actions workspace-service-actions">${main}${secondary}</div><details class="runtime-diagnostics"><summary>运行详情${offline ? " · 诊断" : ""}</summary><dl class="runtime-facts"><div><dt>Worker ID</dt><dd>${escapeHTML(snapshot?.workerId || "—")}</dd></div><div><dt>Runtime ID</dt><dd>${escapeHTML(service.id)}</dd></div><div><dt>快照时间</dt><dd>${escapeHTML(formatTime(snapshot?.generatedAt))}</dd></div><div><dt>入口端口</dt><dd>${escapeHTML(url ? url.port || (url.protocol === "https:" ? "443" : "80") : "未知")}</dd></div><div><dt>工作台地址</dt><dd>${escapeHTML(url?.href || "未提供")}</dd></div></dl><p>状态来自 Worker 探测。探测失败不能单凭此认定进程停止；Worker 在线也不代表业务服务在线。</p><p>${local ? "这是 Worker 本机地址，手机或其他设备需配置可达地址。" : "当前设备访问尚未验证。"}</p><button class="rt-btn" disabled>查看日志 · 浏览器接口未接入</button><p>可在 Worker 本机使用 mashang logs 查看日志。</p></details></li>`;
+    const main = online && url ? `<a class="rt-btn runtime-primary" href="${escapeHTML(url.href)}" target="_blank" rel="noopener noreferrer">打开工作台 ↗</a>` : offline ? `<button class="rt-btn runtime-primary" data-op="up" data-target="${escapeHTML(service.id)}">${aksignal ? "启用调度" : "启动服务"}</button>` : "";
+    const secondary = online ? actionButtons(["restart","down"],service.id).replace('>Restart<',aksignal?'>重启调度器<':'>重启服务<').replace('>Down<',aksignal?'>暂停调度<':'>停止服务<') : "";
+    const feedback = !workerOnline ? "Worker 离线，连接恢复后才能控制服务。" : stale ? "运行快照已过期，等待新状态后再操作。" : online ? aksignal ? "AKsignal 独立定时器在线；重启调度器不会重跑 Daily 批次。" : url ? "服务探测通过，可在新窗口打开工作台。" : "服务探测通过，但 Worker 尚未提供工作台地址。" : offline ? "服务探测未通过，可请求启动或展开运行详情诊断。" : "服务状态未知，等待可靠状态后再操作。";
+    return `<li class="workspace-service compact-service"><div class="runtime-section-head"><h2>${aksignal ? "AKsignal 定时调度器" : "服务控制"}</h2><span class="runtime-state ${statusClass}"><span class="runtime-status-dot" aria-hidden="true"></span>${escapeHTML(status)}</span></div><p class="runtime-feedback">${feedback}</p><div class="rt-actions workspace-service-actions">${main}${secondary}</div><details class="runtime-diagnostics"><summary>运行详情${offline ? " · 诊断" : ""}</summary><dl class="runtime-facts"><div><dt>Worker ID</dt><dd>${escapeHTML(snapshot?.workerId || "—")}</dd></div><div><dt>Runtime ID</dt><dd>${escapeHTML(service.id)}</dd></div><div><dt>快照时间</dt><dd>${escapeHTML(formatTime(snapshot?.generatedAt))}</dd></div>${aksignal ? "" : `<div><dt>入口端口</dt><dd>${escapeHTML(url ? url.port || (url.protocol === "https:" ? "443" : "80") : "未知")}</dd></div><div><dt>工作台地址</dt><dd>${escapeHTML(url?.href || "未提供")}</dd></div>`}</dl><p>状态来自 Worker 探测。探测失败不能单凭此认定进程停止；Worker 在线也不代表业务服务在线。</p>${aksignal ? "" : `<p>${local ? "这是 Worker 本机地址，手机或其他设备需配置可达地址。" : "当前设备访问尚未验证。"}</p>`}<button class="rt-btn" disabled>查看日志 · 浏览器接口未接入</button><p>可在 Worker 本机使用 mashang logs 查看日志。</p></details></li>`;
   }
   function jobItem(job) {
     const last = job.lastRun || {};
@@ -157,6 +160,7 @@ export function initRuntimeUI() {
     const business = operation.details || {};
     const quality = business.quality;
     const facts = [business.targetDate ? `目标日期 ${business.targetDate}` : "",
+      business.triggerSource ? `来源 ${business.triggerSource === 'scheduled' ? '定时' : business.triggerSource === 'manual_restart' ? '维护重启' : '人工'}` : "",
       business.elapsedSeconds != null ? `运行 ${business.elapsedSeconds} 秒` : "",
       business.phase || "", business.totalSteps ? `${business.completedSteps}/${business.totalSteps}` : ""].filter(Boolean).join(" · ");
     const publication = business.publication ? `<span class="rt-sub">最新正式日报 · ${escapeHTML(business.publication.trade_date)} · ${escapeHTML(business.publication.run_id)}</span>` : "";
@@ -167,7 +171,7 @@ export function initRuntimeUI() {
     return `<li class="rt-item"><span class="rt-dot ${state.cls}"></span><div class="rt-main"><strong>${escapeHTML(operation.label || operation.id)}</strong><span class="rt-sub">${detail}</span>${description}<span class="rt-sub">${escapeHTML(facts)}</span>${feedback}${retry}${publication}${warnings}${attachments}</div><div class="rt-actions">${actions}</div></li>`;
   }
   function businessItem(operation) {
-    const d = operation.details || {}, q = d.quality, publication = d.publication;
+    const d = operation.details || {}, q = d.quality, publication = d.publication, schedule = d.schedule;
     const safe = workerOnline && !snapshotStale();
     const pretty = v => /^\d{8}$/.test(v || '') ? `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6)}` : v || '—';
     const status = operation.lastRun?.status || 'UNKNOWN';
@@ -176,7 +180,9 @@ export function initRuntimeUI() {
     const summary = d.marketSnapshot?.runId === publication?.run_id && d.marketSnapshot?.tradeDate === publication?.trade_date ? d.marketSnapshot : null;
     const links = (operation.artifacts || []).map(a=>`<a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载 ${a.extension === '.html' ? 'HTML' : 'Markdown'}</a>`).join('');
     const source = q?.status === 'CONFIRMED' ? '来源已确认' : q?.status === 'COMPLETE' ? '包含兜底来源' : '待核验';
-    const current = !safe ? workerOnline ? '快照已过期' : 'Worker 离线' : ({PUBLISHED:'已发布',RUNNING:'运行中',WAITING:'等待数据 / 恢复',BLOCKED:'已阻断',IDLE:'尚未运行'})[status] || status;
+    const current = !safe ? workerOnline ? '快照已过期' : 'Worker 离线' : ({PUBLISHED:'已发布',RUNNING:'运行中',WAITING:'等待人工恢复',MISSED:'错过计划 · 待手动运行',FAILED:'运行失败 · 待手动恢复',BLOCKED:'已阻断',IDLE:'尚未运行'})[status] || status;
+    const scheduleStatus = schedule ? (schedule.enabled ? '运行中' : ({ERROR:'异常',BLOCKED:'日历/配置阻断',OFFLINE:'未运行'})[schedule.agentStatus] || '状态未知') : '';
+    const schedulePanel = schedule ? `<section><h2>08:30 定时任务</h2><p>调度器 ${scheduleStatus} · 下次计划时点 ${escapeHTML(formatTime(schedule.nextScheduledAt,d.timezone))}</p><p>最近检查 ${escapeHTML(formatTime(schedule.lastCheckedAt,d.timezone))} · 待手动处理 ${escapeHTML(schedule.manualPendingCount ?? 0)} 项</p><p class="rt-sub">错过时点或运行失败不会自动重试；通过“手动运行/恢复”处理。重启调度器只重启定时进程。</p></section>` : '';
     const facts = summary ? snapshotColumns(summary,heatMode) : "";
     return `<li class="business-operation">
       <section class="business-batch"><div class="business-section-head"><h2>市场状态摘要</h2><strong class="business-date">${escapeHTML(pretty(publication?.trade_date))}</strong></div>
@@ -184,10 +190,11 @@ export function initRuntimeUI() {
         <div class="business-summary">${facts || `<p class="rt-sub">${escapeHTML(html ? 'Market Snapshot 尚未提供，请查询状态或查看正式日报' : '尚无正式发布日报')}</p>`}</div>
         <p class="rt-sub">发布于 ${escapeHTML(formatTime(publication?.published_at,d.timezone))} · Market Snapshot · ${escapeHTML(summary?.method || "正式事实只读摘要")}</p>
       </section>
-      <section><div class="business-section-head"><div><h2>当前任务</h2><p>目标 ${escapeHTML(pretty(d.targetDate))} · <strong>${escapeHTML(current)}</strong>${status === 'RUNNING' ? ` · ${escapeHTML(d.phase || '')} · ${escapeHTML(d.elapsedSeconds ?? 0)} 秒` : ''}</p></div><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled ? 'disabled' : ''}>手动补跑</button><button class="rt-btn" data-refresh ${querying ? 'disabled' : ''}>${querying ? '查询中…' : '查询状态'}</button></div></div>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}${d.retryAt ? `<p>下次可重试 ${escapeHTML(formatTime(d.retryAt))}</p>` : ''}<p role="status" aria-live="polite" class="rt-sub">${escapeHTML(queryFeedback)}</p></section>
+      ${schedulePanel}
+      <section><div class="business-section-head"><div><h2>当前任务</h2><p>目标 ${escapeHTML(pretty(d.targetDate))} · <strong>${escapeHTML(current)}</strong>${status === 'RUNNING' ? ` · ${escapeHTML(d.phase || '')} · ${escapeHTML(d.elapsedSeconds ?? 0)} 秒` : ''}</p></div><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled || status === 'BLOCKED' ? 'disabled' : ''}>${['MISSED','FAILED','WAITING'].includes(status) ? '手动运行 / 恢复' : '手动运行'}</button><button class="rt-btn" data-refresh ${querying ? 'disabled' : ''}>${querying ? '查询中…' : '查询状态'}</button></div></div>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}<p role="status" aria-live="polite" class="rt-sub">${escapeHTML(queryFeedback)}</p></section>
       <section><h2>正式发布结果 · ${escapeHTML(pretty(publication?.trade_date))}</h2><div class="rt-actions">${html ? `<a class="rt-btn" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看完整日报</a>` : '尚无正式日报'}${links}</div></section>
       <section><h2>数据质量</h2><p class="business-quality ${q?.data_complete === false ? 'incomplete' : ''}">${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'} · ${warnings.length} 项警告${q?.truncated ? '（部分截断）' : ''}</p>${(d.metrics || []).map(m=>`<p>${escapeHTML(m.label)} <strong>${escapeHTML(m.value)}</strong></p>`).join('')}<details class="business-warnings"><summary>查看全部质量记录</summary>${warnings.map(v=>`<p>${escapeHTML(v)}</p>`).join('') || '<p>暂无质量记录</p>'}${q?.truncated ? '<p>完整证据见正式日报附件。</p>' : ''}</details></section>
-      <details class="business-diagnostics"><summary>运行详情</summary><dl class="runtime-facts"><div><dt>Worker</dt><dd>${escapeHTML(snapshot?.workerId || '—')}</dd></div><div><dt>快照</dt><dd>${escapeHTML(formatTime(snapshot?.generatedAt))}</dd></div><div><dt>正式 run_id</dt><dd>${escapeHTML(publication?.run_id || '—')}</dd></div><div><dt>当前 run_id</dt><dd>${escapeHTML(d.runId || '—')}</dd></div><div><dt>阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div><div><dt>data_complete</dt><dd>${escapeHTML(q?.data_complete ?? 'unknown')}</dd></div></dl><p class="rt-sub">${escapeHTML(operation.description || '')}</p></details>
+      <details class="business-diagnostics"><summary>运行详情</summary><dl class="runtime-facts"><div><dt>Worker</dt><dd>${escapeHTML(snapshot?.workerId || '—')}</dd></div><div><dt>快照</dt><dd>${escapeHTML(formatTime(snapshot?.generatedAt))}</dd></div><div><dt>正式 run_id</dt><dd>${escapeHTML(publication?.run_id || '—')}</dd></div><div><dt>当前 run_id</dt><dd>${escapeHTML(d.runId || '—')}</dd></div><div><dt>触发来源</dt><dd>${escapeHTML(d.triggerSource === 'scheduled' ? '定时' : d.triggerSource === 'manual' ? '人工' : d.triggerSource === 'manual_restart' ? '维护重启' : '—')}</dd></div><div><dt>阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div><div><dt>data_complete</dt><dd>${escapeHTML(q?.data_complete ?? 'unknown')}</dd></div></dl><p class="rt-sub">${escapeHTML(operation.description || '')}</p></details>
     </li>`;
   }
   function controlItem(control) {
@@ -219,7 +226,7 @@ export function initRuntimeUI() {
     if (mount) {
       // Older Workers may omit workspace metadata. Only presentation uses these legacy IDs/groups.
       const belongs = item => (item.workspace || ({fetch:"fetch",myknbase:"knbase"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
-      const entries = [...services.filter(belongs).map(mount === independentMount ? workspaceServiceItem : serviceItem), ...jobs.filter(belongs).map(jobItem), ...operations.filter(belongs).map(workspace === "aksignal" ? businessItem : operationItem)];
+      const entries = [...services.filter(belongs).map(mount === independentMount || workspace === "aksignal" ? workspaceServiceItem : serviceItem), ...jobs.filter(belongs).map(jobItem), ...operations.filter(belongs).map(operation => workspace === "aksignal" && operation.requestOnly ? businessItem(operation) : operationItem(operation))];
       if (mount === independentMount) {
         const service = services.find(belongs);
         const badge = document.getElementById("independentStatus");

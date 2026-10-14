@@ -35,7 +35,12 @@ function runtimeResponse() {
     { id: "fetch", label: "mashang-fetch", group: "APPS", status: "ONLINE", managed: false, openUrl: "http://127.0.0.1:7860" },
     { id: "myknbase", label: "myknbase", group: "APPS", status: "OFFLINE", managed: false, openUrl: "http://127.0.0.1:7870" },
     { id: "scheduler", label: "Scheduler", group: "MASHANG-SERVICE", summary: "后台服务", status: "ONLINE", managed: true },
+    { id: "aksignal-scheduler", workspace: "aksignal", label: "AKsignal Scheduler", group: "AKSIGNAL", summary: "独立调度", status: "OFFLINE", managed: false },
   ], jobs: [], operations: [
+    { id: "aksignal-daily", workspace: "aksignal", label: "AKsignal Daily", description: "手动运行", enabled: true, requestOnly: true,
+      details: { timezone: "Asia/Shanghai", targetDate: "20261013", schedule: { enabled: false, agentStatus: "OFFLINE", manualPendingCount: 1, missedPolicy: "manual_only" } },
+      lastRun: { status: "MISSED", startedAt: null, finishedAt: null } },
+    { id: "aksignal-daily-maintenance-restart", workspace: "aksignal", label: "AKsignal Daily 维护重启", description: "仅签名变化阻断恢复时使用", enabled: true, lastRun: { status: "IDLE" } },
     { id: "daily", label: "Daily pipeline", group: "MASHANG-SERVICE", description: "Daily operation", enabled: true, lastRun: { status: "FAILED", startedAt: "2026-10-07T09:00:00", finishedAt: "2026-10-07T09:00:00" } },
     { id: "future-no-arg", label: "Future operation", group: "MASHANG-SERVICE", description: "A Worker-provided operation", enabled: true, lastRun: { status: "IDLE" } },
     { id: "allupdate", label: "Full data update", group: "MASHANG-SERVICE", description: "Writes local data", enabled: true, lastRun: { status: "IDLE" } },
@@ -57,6 +62,15 @@ const rendered = elements.get("conversationRuntime").innerHTML;
 assert.match(rendered, /Daily pipeline/);
 assert.match(rendered, /data-op="run" data-target="future-no-arg"/);
 assert.doesNotMatch(rendered, /data-target="fetch"/);
+runtimeUI.setWorkspace("aksignal");
+const aksignalPanel = elements.get("conversationRuntime").innerHTML;
+assert.match(aksignalPanel, /AKsignal 定时调度器/);
+assert.match(aksignalPanel, /启用调度/);
+assert.match(aksignalPanel, /错过计划 · 待手动运行/);
+assert.match(aksignalPanel, /手动运行 \/ 恢复/);
+assert.match(aksignalPanel, /不会自动重试/);
+assert.match(aksignalPanel, /AKsignal Daily 维护重启/);
+assert.match(aksignalPanel, /data-op="run" data-target="aksignal-daily-maintenance-restart"/);
 runtimeUI.setWorkspace("fetch");
 assert.match(elements.get("independentRuntime").innerHTML, /打开工作台/);
 assert.match(elements.get("independentRuntime").innerHTML, /data-op="restart" data-target="fetch"/);
