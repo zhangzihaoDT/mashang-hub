@@ -14,10 +14,18 @@ if (!fixture || !fixture.startsWith('/private/tmp/')) throw Error('AKSIGNAL_TEST
 const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = await mkdtemp(join(tmpdir(), 'aksignal-hub-bridge-'));
 let agentCalls = 0, browser, worker, hub;
-const mock = createServer((req, res) => {
-  if (req.method === 'POST') agentCalls++;
-  if (req.url.startsWith('/global/event')) { res.writeHead(200, {'content-type':'text/event-stream'}); res.write(': heartbeat\n\n'); return; }
-  res.writeHead(200, {'content-type':'application/json'}); res.end(JSON.stringify({providers:{}}));
+const talkRequests=[];
+const mock = createServer(async (req, res) => {
+  let body='';for await (const chunk of req) body+=chunk;
+  const input=body ? JSON.parse(body) : {};
+  req.url=req.url.split('?')[0];
+  if(req.method==='POST') agentCalls++;
+  if(req.url.startsWith('/global/event')) {res.writeHead(200,{'content-type':'text/event-stream'});res.write(': heartbeat\n\n');return;}
+  let value={providers:{}};
+  if(req.url==='/session' && req.method==='POST') {talkRequests.push({kind:'session',input});value={id:'talk-session',permission:input.permission};}
+  else if(req.url==='/session/talk-session' && req.method==='GET') value={id:'talk-session',permission:[{permission:'*',pattern:'*',action:'deny'}]};
+  else if(req.url==='/session/talk-session/message' && req.method==='POST') {talkRequests.push({kind:'message',input});value={info:{providerID:'deepseek',modelID:'test-model'},parts:[{type:'text',text:'测试回答：本期数据不完整，复权限制保留。'}]};}
+  res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(value));
 });
 await new Promise(resolve=>mock.listen(0,'127.0.0.1',resolve));
 const mockURL = `http://127.0.0.1:${mock.address().port}`;
@@ -98,6 +106,15 @@ try {
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'no mobile horizontal overflow');
   assert.deepEqual(errors,[]);
   assert.equal(agentCalls,0,'no OpenCode Agent calls for the domain operation');
+  const session=await (await fetch(base+'/api/sessions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'market-talk-test'})})).json();
+  const response=await fetch(`${base}/api/sessions/${session.id}/message`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:{providerID:'deepseek',modelID:'test-model'},workspaceId:'aksignal',marketArtifactId:operation.artifacts.find(a=>a.extension==='.html').artifactId,parts:[{type:'text',text:'解释市场方向和质量限制'}]})});
+  assert.equal(response.status,202);const sent=await response.json();await until(()=>talkRequests.find(r=>r.kind==='message'),'read-only discussion dispatched');
+  const request=talkRequests.find(r=>r.kind==='message').input;
+  assert.deepEqual(request.tools,{'*':false});assert.deepEqual(talkRequests.find(r=>r.kind==='session').input.permission,[{permission:'*',pattern:'*',action:'deny'}]);
+  assert.equal(request.model.modelID,'test-model');assert.match(request.parts[0].text,/price_basis_verified=false|复权/);assert.match(request.parts[0].text,/dc0f457e0cde4b689fb85e50beb33f46/);assert.match(request.parts[0].text,/data_complete/);assert.ok(!request.parts[0].text.includes(fixture));
+  await until(async()=> (await (await fetch(base+'/api/tasks')).json()).some(t=>t.taskId===sent.taskId && ['RESULT','COMPLETED'].includes(t.status)),'read-only response completed');
+  console.log('PASS: model selection, pinned full report, quality, all tools denied, conversation response');
+
   console.log('PASS: fifth domain, real Worker/Python read-only provider, native tick dedupe, SHA256 downloads, quality, mobile, no Agent');
   console.log('Screenshots:',join(root,'screenshots'));
 } catch(error) { console.error(logs.join('\n')); throw error; }

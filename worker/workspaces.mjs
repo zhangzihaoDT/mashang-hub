@@ -50,6 +50,7 @@ export function buildWorkspaces(env = process.env) {
   const myknbaseRoot = env.MYKNBASE_ROOT || join(homedir(), "Documents/github/mashang-knbase");
 
   const byId = new Map();
+  byId.set("aksignal", {id:"aksignal",label:"AKsignal 市场事实讨论",root:env.MASHANG_AKSIGNAL_ROOT || join(homedir(),"Documents/github/AKsignal"),outputRoots:[]});
   byId.set(DEFAULT_WORKSPACE_ID, {
     id: DEFAULT_WORKSPACE_ID,
     label: "mashang-service",

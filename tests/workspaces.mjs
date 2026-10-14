@@ -21,7 +21,7 @@ assert.equal(resolveWorkspace(workspaces, "myknbase").root, "/tmp/kn");
 assert.equal(resolveWorkspace(workspaces, "nope"), null, "unknown workspace resolves to null");
 
 const list = publicWorkspaceList(workspaces);
-assert.deepEqual(list.map((workspace) => workspace.id).sort(), ["default", "myknbase"]);
+assert.deepEqual(list.map((workspace) => workspace.id).sort(), ["aksignal", "default", "myknbase"]);
 assert.ok(list.every((workspace) => !("root" in workspace) && !("outputRoots" in workspace)), "only id and label are public");
 
 const dir = await mkdtemp(join(tmpdir(), "mashang-workspaces-"));

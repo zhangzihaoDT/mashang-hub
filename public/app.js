@@ -124,15 +124,23 @@ function markdown(value = "") {
   text = text.split(/\n{2,}/).map((paragraph) => paragraph.startsWith("\x00") ? paragraph : `<p>${paragraph.replaceAll("\n", "<br>")}</p>`).join("");
   return text.replace(/\x00(\d+)\x00/g, (_, index) => blocks[index]);
 }
+function latestMarketArtifact() {return runtimeSnapshot?.operations?.find(o=>o.workspace==='aksignal')?.artifacts?.find(a=>a.extension==='.html');}
+function bindMarket() {
+  if(!state.marketArtifact && state.session) {try{state.marketArtifact=JSON.parse(localStorage.getItem(`market:${state.session.id}`));}catch{}}
+  if(!state.marketArtifact) state.marketArtifact=latestMarketArtifact();
+  if(state.marketArtifact && state.session) localStorage.setItem(`market:${state.session.id}`,JSON.stringify(state.marketArtifact));
+  return state.marketArtifact;
+}
 function renderMarketBinding() {
   if(state !== conversations.aksignal) return;
-  const a=runtimeSnapshot?.operations?.find(o=>o.workspace==='aksignal')?.artifacts?.find(a=>a.extension==='.html');
-  $('#marketBinding').innerHTML=`<span>${a ? `本期正式日报 · ${escapeHTML(a.targetDate)}` : '暂无正式日报'} · 讨论发送待授权接通</span><div class="market-questions"><button type="button" data-market-question="概括本期市场方向与趋势">概括本期市场</button><button type="button" data-market-question="哪些行业已经形成趋势？">行业趋势</button><button type="button" data-market-question="数据缺口影响哪些结论？">数据质量影响</button></div>`;
+  if(!state.marketArtifact && state.session) {try{state.marketArtifact=JSON.parse(localStorage.getItem(`market:${state.session.id}`));}catch{}}
+  const a=state.marketArtifact || latestMarketArtifact(),latest=latestMarketArtifact();
+  $('#marketBinding').innerHTML=`<span>${a ? `基于 ${escapeHTML(a.targetDate)} 正式日报 · 只读讨论` : '暂无正式日报'}</span>${state.marketArtifact && latest?.artifactId !== state.marketArtifact.artifactId ? '<span> · 新日报可用，开始新对话切换批次</span>' : ''}<div class="market-questions"><button type="button" data-market-question="概括本期市场方向与趋势">概括本期市场</button><button type="button" data-market-question="哪些行业已经形成趋势？">行业趋势</button><button type="button" data-market-question="数据缺口影响哪些结论？">数据质量影响</button></div>`;
 }
 $('#marketBinding').addEventListener('click',event=>{const q=event.target.closest('[data-market-question]');if(q){$('#prompt').value=q.dataset.marketQuestion;autosizePrompt();$('#prompt').focus();}});
 function sessionName(session) { return session?.title || session?.name || session?.id?.slice(0, 16) || "未创建"; }
 function updateSendAvailability() {
-  $('#send').disabled = state === conversations.aksignal || state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
+  $('#send').disabled = (state === conversations.aksignal && !latestMarketArtifact() && !state.marketArtifact) || state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
   $('#previewPublication').disabled = state.turnActive || submitting || !state.connected || !runtimeSnapshot?.operations?.some(item=>item.workspace === 'publish' && item.requiresSnapshot && item.enabled);
 }
 function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); }
@@ -314,7 +322,7 @@ function parseMessage(data) { return (data?.parts || []).filter((part) => part.t
 function actualModel(info) { const modelID = info?.modelID || info?.model?.id; const providerID = info?.providerID || info?.model?.providerID; const known = state.models?.find((model) => model.modelID === modelID && model.providerID === providerID); return { label: known ? modelLabel(known) : modelID ? `${providerID || ""}/${modelID}` : "Unknown model", modelID, providerID, cost: info?.cost, tokens: info?.tokens }; }
 async function sendPrompt(text, publicationPreview = false) {
   if (state.turnActive || submitting) return;
-  if(state === conversations.aksignal) throw new Error("AKsignal 讨论发送尚未授权，问题保留在输入框");
+  if(state === conversations.aksignal && !bindMarket()) throw new Error("暂无可引用的正式日报");
   submitting = true;
   if (state.activeTaskId) state.messages.push({ role:'assistant',kind:'result',text:state.assistantText,status:state.taskState,title:state.taskTitle,plainText:state.resultPlainText,artifacts:state.artifacts.map(item=>({...item})) });
   state.taskTitle = text.trim().slice(0, 48); state.resultPlainText = false; state.startedAt = Date.now(); state.finishedAt = null;
@@ -324,9 +332,10 @@ async function sendPrompt(text, publicationPreview = false) {
   renderMessages(); renderResult(""); renderArtifacts(); setStatus("UNDERSTANDING"); updateCancelVisibility(); $("#send").disabled = true;
   try {
     if (!state.session) await ensureSession();
+    if(state === conversations.aksignal) {bindMarket();renderMarketBinding();}
     if (!publicationPreview && !state.selectedModel?.available) throw new Error("请选择可用模型");
     state.operationControl = null; renderPublication();
-    const response = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/message`, { method: "POST", body: JSON.stringify({ model: state.selectedModel ? { providerID: state.selectedModel.providerID, modelID: state.selectedModel.modelID } : null, workspaceId: state === conversations.publish ? "publish" : null, parts: [{ type: "text", text: state === conversations.publish && !publicationPreview ? `这是内容起草与审阅请求，只生成或修改文字，不执行发布。\n\n${text}` : text }], confirmationId: state.confirmationId }) });
+    const response = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/message`, { method: "POST", body: JSON.stringify({ model: state.selectedModel ? { providerID: state.selectedModel.providerID, modelID: state.selectedModel.modelID } : null, workspaceId: state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : null, marketArtifactId: state === conversations.aksignal ? state.marketArtifact?.artifactId : undefined, parts: [{ type: "text", text: state === conversations.publish && !publicationPreview ? `这是内容起草与审阅请求，只生成或修改文字，不执行发布。\n\n${text}` : text }], confirmationId: state.confirmationId }) });
     if (response.taskId) { if (response.turnId) state.turnId = response.turnId; applyTaskEvent(response.taskId, "task.accepted"); }
     for (const event of state.earlyEvents.splice(0)) handleServerEvent(event);
     renderDebug();
@@ -425,8 +434,8 @@ $('#newSession').addEventListener('click', async () => {
   try {
     state.session = await api('/api/sessions', { method:'POST', body:JSON.stringify({title:'mashang-hub'}) });
     localStorage.setItem(sessionStorageKey(), state.session.id);
-    Object.assign(state, {messages:[],artifacts:[],artifactScanText:'',activeTaskId:null,taskState:'IDLE',turnId:null,openCodeSessionId:null,turnActive:false,pendingPermission:null,confirmationId:null,operationControl:null,earlyEvents:[],taskTitle:null,draft:'',assistantText:'',resultPlainText:false,startedAt:null,finishedAt:null});
-    $('#prompt').value = ''; renderConversation(); autosizePrompt();
+    Object.assign(state, {messages:[],artifacts:[],artifactScanText:'',activeTaskId:null,taskState:'IDLE',turnId:null,openCodeSessionId:null,turnActive:false,pendingPermission:null,confirmationId:null,operationControl:null,earlyEvents:[],marketArtifact:null,taskTitle:null,draft:'',assistantText:'',resultPlainText:false,startedAt:null,finishedAt:null});
+    $('#prompt').value = ''; renderConversation(); renderMarketBinding(); autosizePrompt();
   } catch (error) { pushNotice(`无法创建新对话：${error.message}`); }
   finally { submitting = false; updateSendAvailability(); }
 });
