@@ -10,15 +10,16 @@ function optional(selector) { return document.querySelector(selector); }
 const initialState = { session: null, connected: false, status: "IDLE", workerStatus: "OFFLINE", taskState: "IDLE", activeTaskId: null, turnId: null, openCodeSessionId: null, events: [], lastRequest: null, lastResponse: null, messages: [], assistantText: "", artifactScanText: "", artifacts: [], models: [], selectedModel: null, turnActive: false, pendingPermission: null, confirmationId: null, earlyEvents: [] };
 
 let state = initialState;
-const conversations = { service: state, publish: null };
+const conversations = { service: state, publish: null, aksignal: null };
 let currentWorkspace = 'service';
 let submitting = false;
 let runtimeSnapshot = null;
 const workspaceCopy = {
   service: { title:'Service', eyebrow:'BUSINESS & RESEARCH', placeholder:'描述业务问题、研究主题或报告要求…', welcome:'今天，想研究什么？', description:'提出业务问题，查看分析结论、研究报告与附件。' },
+  aksignal: {title:'AKsignal',eyebrow:'MARKET FACTS',placeholder:'围绕本期市场事实提问…',welcome:'读懂本期市场',description:'基于正式日报讨论市场方向、趋势与底部位置。'},
   publish: { title:'Publish', eyebrow:'DRAFT & REVIEW', placeholder:'描述写作主题，或粘贴需要整理的正文…', welcome:'把想法，整理成文字。', description:'起草、修改和审阅正文。最终正文经预览、审批后由授权 Worker 执行。' },
 };
-function sessionStorageKey(context = state) { return context === conversations.publish ? 'mashang-hub-publish-session' : 'mashang-hub-session'; }
+function sessionStorageKey(context = state) { return context === conversations.aksignal ? 'mashang-hub-aksignal-session' : context === conversations.publish ? 'mashang-hub-publish-session' : 'mashang-hub-session'; }
 function refreshExecutionInfo() {
   $('#resultBody').classList.toggle('hidden', !state.turnActive && !state.activeTaskId && !state.assistantText && !state.artifacts.length && !state.operationControl);
   $('#taskTitle').textContent = state.taskTitle || '等待一项新任务';
@@ -73,9 +74,9 @@ function switchWorkspace(kind) {
   currentWorkspace = kind;
   runtimeUI.setWorkspace(kind);
   for (const button of $('#workspaceNav').querySelectorAll('[data-workspace]')) { const active = button.dataset.workspace === kind; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); }
-  const conversational = kind === 'service' || kind === 'publish';
-  $('#conversationWorkspace').classList.toggle('hidden', !conversational); $('#independentWorkspace').classList.toggle('hidden', conversational || kind === 'aksignal'); $('#businessWorkspace').classList.toggle('hidden', kind !== 'aksignal');
-  if (kind === 'aksignal') return;
+  const conversational = kind === 'service' || kind === 'publish' || kind === 'aksignal';
+  $('#conversationWorkspace').classList.toggle('hidden', !conversational); $('#independentWorkspace').classList.toggle('hidden', conversational || kind === 'aksignal'); $('#businessWorkspace').classList.add('hidden'); $('#marketReport').classList.toggle('hidden',kind !== 'aksignal'); $('#marketBinding').classList.toggle('hidden',kind !== 'aksignal');
+
   if (!conversational) { renderIndependent(); return; }
   if (!conversations[kind]) conversations[kind] = { ...initialState, session:null, activeTaskId:null, turnId:null, taskState:'IDLE', status:'IDLE', turnActive:false, messages:[], artifacts:[], assistantText:'', pendingPermission:null, confirmationId:null, earlyEvents:[], draft:'', taskTitle:null, sessionPromise:null, openCodeSessionId:null, resultPlainText:false, startedAt:null, finishedAt:null };
   const previous = state; state = conversations[kind];
@@ -86,7 +87,7 @@ function switchWorkspace(kind) {
   for (const id of ['publicationVisibility','publicationStatement']) $('#'+id).classList.toggle('hidden', kind !== 'publish');
   $('#publicationVisibility').value = state.publicationVisibility || 'public'; $('#publicationStatement').value = state.publicationStatement || 'original';
   $('#prompt').placeholder = copy.placeholder; $('#prompt').value = state.draft || ''; autosizePrompt();
-  renderConversation(); renderModelOptions(state.models);
+  renderConversation(); renderModelOptions(state.models); if(kind === "aksignal") renderMarketBinding();
   if (!state.session) ensureSession().catch(error => { if (state === conversations[kind]) pushNotice(error.message); });
 }
 $('#workspaceNav').addEventListener('click', event => { const button = event.target.closest('[data-workspace]'); if (button) switchWorkspace(button.dataset.workspace); });
@@ -123,9 +124,15 @@ function markdown(value = "") {
   text = text.split(/\n{2,}/).map((paragraph) => paragraph.startsWith("\x00") ? paragraph : `<p>${paragraph.replaceAll("\n", "<br>")}</p>`).join("");
   return text.replace(/\x00(\d+)\x00/g, (_, index) => blocks[index]);
 }
+function renderMarketBinding() {
+  if(state !== conversations.aksignal) return;
+  const a=runtimeSnapshot?.operations?.find(o=>o.workspace==='aksignal')?.artifacts?.find(a=>a.extension==='.html');
+  $('#marketBinding').innerHTML=`<span>${a ? `本期正式日报 · ${escapeHTML(a.targetDate)}` : '暂无正式日报'} · 讨论发送待授权接通</span><div class="market-questions"><button type="button" data-market-question="概括本期市场方向与趋势">概括本期市场</button><button type="button" data-market-question="哪些行业已经形成趋势？">行业趋势</button><button type="button" data-market-question="数据缺口影响哪些结论？">数据质量影响</button></div>`;
+}
+$('#marketBinding').addEventListener('click',event=>{const q=event.target.closest('[data-market-question]');if(q){$('#prompt').value=q.dataset.marketQuestion;autosizePrompt();$('#prompt').focus();}});
 function sessionName(session) { return session?.title || session?.name || session?.id?.slice(0, 16) || "未创建"; }
 function updateSendAvailability() {
-  $('#send').disabled = state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
+  $('#send').disabled = state === conversations.aksignal || state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
   $('#previewPublication').disabled = state.turnActive || submitting || !state.connected || !runtimeSnapshot?.operations?.some(item=>item.workspace === 'publish' && item.requiresSnapshot && item.enabled);
 }
 function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); }
@@ -163,7 +170,7 @@ function permissionHTML() {
 function renderMessages() {
   const container = $("#messages");
   const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
-  const body = state.messages.length ? state.messages.map(renderMessage).join("") : `<div class="welcome"><img class="avatar" src="/raccoon.png" width="42" height="42" alt="mashang" /><h2>${workspaceCopy[state === conversations.publish ? "publish" : "service"].welcome}</h2><p>${workspaceCopy[state === conversations.publish ? "publish" : "service"].description}</p></div>`;
+  const body = state.messages.length ? state.messages.map(renderMessage).join("") : `<div class="welcome"><img class="avatar" src="/raccoon.png" width="42" height="42" alt="mashang" /><h2>${workspaceCopy[state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : "service"].welcome}</h2><p>${workspaceCopy[state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : "service"].description}</p></div>`;
   const reply = $("#resultBody");
   reply.remove();
   container.innerHTML = body + (state.pendingPermission ? permissionHTML() : "");
@@ -307,6 +314,7 @@ function parseMessage(data) { return (data?.parts || []).filter((part) => part.t
 function actualModel(info) { const modelID = info?.modelID || info?.model?.id; const providerID = info?.providerID || info?.model?.providerID; const known = state.models?.find((model) => model.modelID === modelID && model.providerID === providerID); return { label: known ? modelLabel(known) : modelID ? `${providerID || ""}/${modelID}` : "Unknown model", modelID, providerID, cost: info?.cost, tokens: info?.tokens }; }
 async function sendPrompt(text, publicationPreview = false) {
   if (state.turnActive || submitting) return;
+  if(state === conversations.aksignal) throw new Error("AKsignal 讨论发送尚未授权，问题保留在输入框");
   submitting = true;
   if (state.activeTaskId) state.messages.push({ role:'assistant',kind:'result',text:state.assistantText,status:state.taskState,title:state.taskTitle,plainText:state.resultPlainText,artifacts:state.artifacts.map(item=>({...item})) });
   state.taskTitle = text.trim().slice(0, 48); state.resultPlainText = false; state.startedAt = Date.now(); state.finishedAt = null;
@@ -370,7 +378,7 @@ function processServerEvent(event) {
   if (event.taskId && !state.activeTaskId && state.turnActive) { state.earlyEvents.push(event); return; }
   logEvent(event);
   if (event.type === 'permission.resolved') { for (const item of [...(state.permissionQueue || [])]) if (!event.requestId || item.id === event.requestId) resolvePermission(state, item.id); return; }
-  if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); if (event.type === "runtime.snapshot") { runtimeSnapshot = event.snapshot; updateSendAvailability(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); } return; }
+  if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); if (event.type === "runtime.snapshot") { runtimeSnapshot = event.snapshot; updateSendAvailability(); if(currentWorkspace === "aksignal") renderMarketBinding(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); } return; }
   if (event.type === "worker.status") { state.models = event.models || state.models; for (const context of Object.values(conversations)) if (context) context.models = state.models; if (event.models) renderModelOptions(event.models); setConnection(["ONLINE", "BUSY"].includes(event.status), event.status); return; }
   if (event.type === "session.mapped") { state.openCodeSessionId = event.openCodeSessionId; renderDebug(); return; }
   if (event.type === "task.timeout.warning") { if (!isTerminalState()) { setStatusLabel("运行超时，正在尝试取消"); updateRunningLabel("运行超时，正在尝试取消"); } return; }

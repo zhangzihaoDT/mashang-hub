@@ -182,12 +182,10 @@ export function initRuntimeUI() {
       <section class="business-batch"><div class="business-section-head"><h2>最新日报</h2><strong class="business-date">${escapeHTML(pretty(publication?.trade_date))}</strong></div>
         <div class="business-badges"><span class="runtime-state online">${escapeHTML(source)}</span><span class="runtime-state ${q?.data_complete === false ? 'unknown' : 'completed'}">${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'}</span></div>
         <div class="business-summary">${facts || `<p class="rt-sub">${escapeHTML(summary?.error || (html ? '正在读取正式日报摘要…' : '尚无正式发布日报'))}</p>`}</div>
-        <div class="business-section-head"><span class="rt-sub">发布于 ${escapeHTML(formatTime(publication?.published_at,d.timezone))} · 事实速览 · 各表首条样本，完整市场结论请阅读日报</span><div class="rt-actions">${html ? `<a class="rt-btn business-primary" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看完整日报</a>` : ''}${links}</div></div>
-      </section>
-      <section><div class="business-section-head"><div><h2>讨论本期市场</h2><p class="rt-sub">围绕 ${escapeHTML(pretty(publication?.trade_date))} 的已发布事实提问</p></div><button class="rt-btn" data-talk ${html ? '' : 'disabled'}>准备讨论</button></div>
-        ${discussion ? `<div class="business-talk"><label for="marketQuestion">你的问题</label><textarea id="marketQuestion" rows="3" placeholder="例如：哪些行业已形成趋势？哪些结论受数据缺口影响？">${escapeHTML(discussion.question)}</textarea><p class="rt-sub">已固定批次 ${escapeHTML(pretty(discussion.date))}。当前未连接 AKsignal 对话执行器，可复制问题与证据到对话中讨论。</p><button class="rt-btn" data-copy-talk>复制讨论上下文</button><button class="rt-btn" data-close-talk>收起</button><p role="status" data-talk-feedback></p></div>` : ''}
+        <p class="rt-sub">发布于 ${escapeHTML(formatTime(publication?.published_at,d.timezone))} · 事实速览 · 各表首条样本</p>
       </section>
       <section><div class="business-section-head"><div><h2>当前任务</h2><p>目标 ${escapeHTML(pretty(d.targetDate))} · <strong>${escapeHTML(current)}</strong>${status === 'RUNNING' ? ` · ${escapeHTML(d.phase || '')} · ${escapeHTML(d.elapsedSeconds ?? 0)} 秒` : ''}</p></div><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled ? 'disabled' : ''}>手动补跑</button><button class="rt-btn" data-refresh ${querying ? 'disabled' : ''}>${querying ? '查询中…' : '查询状态'}</button></div></div>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}${d.retryAt ? `<p>下次可重试 ${escapeHTML(formatTime(d.retryAt))}</p>` : ''}<p role="status" aria-live="polite" class="rt-sub">${escapeHTML(queryFeedback)}</p></section>
+      <section><h2>正式发布结果 · ${escapeHTML(pretty(publication?.trade_date))}</h2><div class="rt-actions">${html ? `<a class="rt-btn" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看完整日报</a>` : '尚无正式日报'}${links}</div></section>
       <section><h2>数据质量</h2><p class="business-quality ${q?.data_complete === false ? 'incomplete' : ''}">${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'} · ${warnings.length} 项警告${q?.truncated ? '（部分截断）' : ''}</p>${(d.metrics || []).map(m=>`<p>${escapeHTML(m.label)} <strong>${escapeHTML(m.value)}</strong></p>`).join('')}<details class="business-warnings"><summary>查看全部质量记录</summary>${warnings.map(v=>`<p>${escapeHTML(v)}</p>`).join('') || '<p>暂无质量记录</p>'}${q?.truncated ? '<p>完整证据见正式日报附件。</p>' : ''}</details></section>
       <details class="business-diagnostics"><summary>运行详情</summary><dl class="runtime-facts"><div><dt>Worker</dt><dd>${escapeHTML(snapshot?.workerId || '—')}</dd></div><div><dt>快照</dt><dd>${escapeHTML(formatTime(snapshot?.generatedAt))}</dd></div><div><dt>正式 run_id</dt><dd>${escapeHTML(publication?.run_id || '—')}</dd></div><div><dt>当前 run_id</dt><dd>${escapeHTML(d.runId || '—')}</dd></div><div><dt>阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div><div><dt>data_complete</dt><dd>${escapeHTML(q?.data_complete ?? 'unknown')}</dd></div></dl><p class="rt-sub">${escapeHTML(operation.description || '')}</p></details>
     </li>`;
@@ -238,11 +236,11 @@ export function initRuntimeUI() {
     const services = snapshot?.services || [];
     const jobs = snapshot?.jobs || [];
     const operations = snapshot?.operations || [];
-    const mount = workspace === "aksignal" ? businessMount : ["fetch", "knbase"].includes(workspace) ? independentMount : conversationMount;
+    const mount = workspace === "aksignal" ? conversationMount : ["fetch", "knbase"].includes(workspace) ? independentMount : conversationMount;
     if (mount) {
       // Older Workers may omit workspace metadata. Only presentation uses these legacy IDs/groups.
       const belongs = item => (item.workspace || ({fetch:"fetch",myknbase:"knbase"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
-      const entries = [...services.filter(belongs).map(mount === independentMount ? workspaceServiceItem : serviceItem), ...jobs.filter(belongs).map(jobItem), ...operations.filter(belongs).map(mount === businessMount ? businessItem : operationItem)];
+      const entries = [...services.filter(belongs).map(mount === independentMount ? workspaceServiceItem : serviceItem), ...jobs.filter(belongs).map(jobItem), ...operations.filter(belongs).map(workspace === "aksignal" ? businessItem : operationItem)];
       if (mount === independentMount) {
         const service = services.find(belongs);
         const badge = document.getElementById("independentStatus");
@@ -257,11 +255,15 @@ export function initRuntimeUI() {
       const openedBusiness = [...mount.querySelectorAll(".business-warnings[open],.business-diagnostics[open]")].map(e=>e.className);
       const historyOpen = mount.querySelector(".runtime-history")?.open;
       const detailsOpen = mount.querySelector(".runtime-diagnostics")?.open;
-      mount.innerHTML = (controlError ? `<p role="alert" class="rt-empty">${escapeHTML(controlError)}</p>` : "") + (mount === independentMount || mount === businessMount ? "" : `<div class="workspace-runtime-meta">运行节点 · ${escapeHTML(snapshot?.workerId || "Mac Worker")} · ${workerOnline ? "Worker 在线" : "Worker 离线"} · 快照 ${escapeHTML(formatTime(snapshot?.generatedAt))}</div>`)
-        + (workspace === "publish" ? `<p class="rt-empty">${operations.some(item=>belongs(item) && item.requiresSnapshot) ? "发布审批与结果在对话中展示。" : "正式发布尚未接入：Worker 尚未注册快照发布能力。"}</p>` : `<ul class="rt-list">${entries.join("") || '<li class="rt-empty">尚无属于此工作空间的 Runtime 记录</li>'}</ul><p class="workspace-runtime-note ${mount === independentMount || mount === businessMount ? 'hidden' : ''}">服务状态来自 Worker 探测，不等于本设备可访问。Offline 表示探测未通过，不能单凭它认定进程已停止。日志目前可在 Worker 本机通过 mashang logs 查看。</p>`)
+      mount.innerHTML = (controlError ? `<p role="alert" class="rt-empty">${escapeHTML(controlError)}</p>` : "") + (mount === independentMount || workspace === "aksignal" ? "" : `<div class="workspace-runtime-meta">运行节点 · ${escapeHTML(snapshot?.workerId || "Mac Worker")} · ${workerOnline ? "Worker 在线" : "Worker 离线"} · 快照 ${escapeHTML(formatTime(snapshot?.generatedAt))}</div>`)
+        + (workspace === "publish" ? `<p class="rt-empty">${operations.some(item=>belongs(item) && item.requiresSnapshot) ? "发布审批与结果在对话中展示。" : "正式发布尚未接入：Worker 尚未注册快照发布能力。"}</p>` : `<ul class="rt-list">${entries.join("") || '<li class="rt-empty">尚无属于此工作空间的 Runtime 记录</li>'}</ul><p class="workspace-runtime-note ${mount === independentMount || workspace === 'aksignal' ? 'hidden' : ''}">服务状态来自 Worker 探测，不等于本设备可访问。Offline 表示探测未通过，不能单凭它认定进程已停止。日志目前可在 Worker 本机通过 mashang logs 查看。</p>`)
         + (activeActions.length ? `<ul class="rt-list rt-current-actions">${activeActions.map(controlItem).join("")}</ul>` : "")
         + (history.length ? `<details class="runtime-history"><summary>操作历史 · ${history.length}</summary><p>以下是已结束的操作记录，不代表当前服务状态。</p><ul class="rt-list">${history.map(controlItem).join("")}</ul></details>` : "");
       for (const cls of openedBusiness) { const el=mount.querySelector("."+cls); if(el) el.open=true; }
+      if(workspace === 'aksignal') {
+        const report=document.getElementById('marketReport'), batch=mount.querySelector('.business-batch');
+        if(report && batch) { report.replaceChildren(batch); report.classList.remove('hidden'); }
+      }
       if (historyOpen && mount.querySelector(".runtime-history")) mount.querySelector(".runtime-history").open = true;
       if (detailsOpen && mount.querySelector(".runtime-diagnostics")) mount.querySelector(".runtime-diagnostics").open = true;
       if (actions.some(item=>item.status === "AWAITING_PERMISSION") && mount === conversationMount) mount.closest("details").open = true;
