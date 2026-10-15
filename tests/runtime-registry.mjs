@@ -5,16 +5,18 @@ const env = {
   MASHANG_SERVICE_ROOT: "/tmp/svc",
   MASHANG_HUB_ROOT: "/tmp/hub",
   MASHANG_AKSIGNAL_ROOT: "/tmp/aksignal",
+  MASHANG_MIIT_ROOT: "/tmp/miit",
   OPENCODE_URL: "http://127.0.0.1:5000/",
   MASHANG_FETCH_URL: "http://127.0.0.1:6000",
+  MASHANG_MIIT_URL: "http://127.0.0.1:8790",
   MYKNBASE_URL: "http://127.0.0.1:7000",
   RUNTIME_PROBE_TIMEOUT_MS: "1000",
 };
 
 const registry = buildRegistry(env);
 const ids = registry.services.map((service) => service.id);
-assert.deepEqual(ids, ["fetch", "myknbase", "scheduler", "aksignal-scheduler"]);
-assert.equal(registry.services.length, 4);
+assert.deepEqual(ids, ["fetch", "miit", "myknbase", "scheduler", "aksignal-scheduler"]);
+assert.equal(registry.services.length, 5);
 assert.deepEqual(registry.dependencies.map((dependency) => dependency.id), ["opencode"]);
 assert.equal(registry.jobs.length, 0);
 assert.deepEqual(registry.operations.map((operation) => operation.id), ["aksignal-daily", "daily", "allupdate"]);
@@ -69,6 +71,20 @@ assert.equal(fetchControl.start.detach, false);
 assert.equal(fetchControl.start.command, "./scripts/dev.sh");
 assert.deepEqual(fetchControl.stop, { command: "./scripts/dev.sh", args: ["stop"], cwd: fetchControl.start.cwd });
 
+const miit = registry.services.find((service) => service.id === "miit");
+assert.equal(miit.workspace, "miit");
+assert.equal(miit.label, "mashang-miit");
+assert.equal(miit.openUrl, "http://127.0.0.1:8790");
+assert.equal(miit.probe.url, "http://127.0.0.1:8790/");
+assert.equal(miit.match, "scripts/workbench_server\\.py --port 8790");
+assert.equal(miit.logs[0].path, "/tmp/miit/runs/workbench/server.log");
+assert.equal(miit.control.start.command, "./scripts/dev.sh");
+assert.deepEqual(miit.control.start.args, ["start"]);
+assert.equal(miit.control.start.cwd, "/tmp/miit");
+assert.equal(miit.control.start.env.PORT, "8790");
+assert.deepEqual(miit.control.stop.args, ["stop"]);
+assert.equal(miit.control.stop.cwd, "/tmp/miit");
+
 assert.equal(registry.services.some((s) => s.id === "worker"), false);
 
 assert.equal(registry.runtimeDir, "/tmp/hub/.local/runtime");
@@ -89,7 +105,7 @@ assert.equal(fetch.label, "custom-fetch");
 assert.equal(fetch.probe.url, "http://127.0.0.1:9999/health");
 assert.equal(fetch.probe.type, "http");
 assert.ok(overridden.services.some((s) => s.id === "extra"));
-assert.equal(overridden.services.length, 5);
+assert.equal(overridden.services.length, 6);
 assert.equal(overridden.jobs.length, 0);
 assert.equal(overridden.operations.length, 4);
 assert.ok(overridden.operations.some((operation) => operation.id === "future-no-arg"), "Worker config can add an operation without a Hub mapping");
@@ -108,4 +124,7 @@ assert.ok(!new RegExp(knbase.match).test("node server/main.mjs --root /tmp/trial
 const publicUi = buildRegistry({MASHANG_FETCH_UI_URL:"https://fetch.example.test/ui/",MYKNBASE_UI_URL:"https://knbase.example.test/"});
 assert.equal(publicUi.services.find(service=>service.id==="fetch").openUrl,"https://fetch.example.test/ui/");
 assert.equal(publicUi.services.find(service=>service.id==="myknbase").openUrl,"https://knbase.example.test/");
+const miitUi = buildRegistry({MASHANG_MIIT_UI_URL:"https://miit.example.test/"}).services.find(service=>service.id==="miit");
+assert.equal(miitUi.openUrl,"https://miit.example.test/");
+assert.equal(miitUi.probe.url,"http://127.0.0.1:8790/");
 assert.equal(publicUi.services.find(service=>service.id==="fetch").probe.url,"http://127.0.0.1:7860/api/formats");

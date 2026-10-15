@@ -129,7 +129,7 @@ mashang run <job|operation> # run a declared job or no-argument operation
 mashang logs [id] [--lines N] [--follow] [--all] [--json]
 ```
 
-Services: `fetch`, `myknbase`, `scheduler`. Operations: `daily`, `allupdate`.
+Services: `fetch`, `miit`, `myknbase`, `scheduler`. Operations: `daily`, `allupdate`.
 
 Safety model:
 
@@ -137,7 +137,9 @@ Safety model:
 - `up` is a no-op when the canonical process is already running, so a stale process is never "re-legitimized". If only a legacy process exists, `up` warns and starts the canonical entry; `down` refuses to stop legacy-only processes.
 - Instances started by `mashang` are tracked under `MASHANG_RUNTIME_DIR` (default `<hub>/.local/runtime/`) and stopped by process group. `status` marks untracked running instances as `(unmanaged)`.
 
-Without linking, use `node worker/mashang.mjs <command>`. Configure via `MASHANG_SERVICE_ROOT`, `MASHANG_HUB_ROOT`, `MASHANG_FETCH_ROOT`, `MYKNBASE_ROOT`, `MASHANG_RUNTIME_DIR`, `MASHANG_SCHEDULER_SERIES`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MYKNBASE_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override (read by both the CLI and the Worker). The Hub exposes the same runtime over the protocol below.
+Without linking, use `node worker/mashang.mjs <command>`. Configure via `MASHANG_SERVICE_ROOT`, `MASHANG_HUB_ROOT`, `MASHANG_FETCH_ROOT`, `MASHANG_MIIT_ROOT`, `MYKNBASE_ROOT`, `MASHANG_RUNTIME_DIR`, `MASHANG_SCHEDULER_SERIES`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MASHANG_MIIT_URL`, `MASHANG_MIIT_UI_URL`, `MYKNBASE_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override (read by both the CLI and the Worker). The Hub exposes the same runtime over the protocol below.
+
+MIIT is controlled as an independent local service, like Fetch. Hub Runtime starts/stops `mashang-miit/scripts/dev.sh`; the MIIT repository continues to own its task ledger, data, reports and standalone workbench UI. The default entry is `http://127.0.0.1:8790`; set `MASHANG_MIIT_UI_URL` only when the browser needs a separately reachable URL. The local health probe remains on `MASHANG_MIIT_URL` and is not replaced by the browser URL.
 
 ### Runtime status over the Hub protocol
 

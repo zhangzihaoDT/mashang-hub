@@ -31,22 +31,27 @@ try{
   if(message.type==='artifact.request')send({type:'artifact.response',requestId:message.requestId,artifactId:message.artifactId,filename:'报告.md',contentType:'text/markdown; charset=utf-8',contentBase64:Buffer.from('# 附件预览\n\n来自 Mock Worker 的报告。').toString('base64')});
  });
  send({type:'worker.register',workerId:'ui-worker',models:[{key:'deepseek',providerID:'mock',modelID:'mock',label:'Mock model',available:true}],workspaces:[]});
- send({type:'runtime.snapshot',protocolVersion:1,workerId:'ui-worker',sequence:1,generatedAt:new Date().toISOString(),dependencies:[],services:[{id:'fetch',label:'Fetch',status:'ONLINE',openUrl:'https://fetch.example.test/'},{id:'myknbase',label:'Knbase',status:'ONLINE',openUrl:'http://127.0.0.1:4317/'}],jobs:[],operations:[]});
+  send({type:'runtime.snapshot',protocolVersion:1,workerId:'ui-worker',sequence:1,generatedAt:new Date().toISOString(),dependencies:[],services:[{id:'fetch',label:'Fetch',status:'ONLINE',openUrl:'https://fetch.example.test/'},{id:'miit',workspace:'miit',label:'mashang-miit',status:'OFFLINE',openUrl:'http://127.0.0.1:8790'},{id:'myknbase',label:'Knbase',status:'ONLINE',openUrl:'http://127.0.0.1:4317/'}],jobs:[],operations:[]});
  browser=await chromium.launch({headless:true,...(process.env.CHROME_BIN?{executablePath:process.env.CHROME_BIN}:{})});
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.on('pageerror',error=>errors.push(error.message));
- await page.route('**/api/runtime/control',async route=>{assert.deepEqual(route.request().postDataJSON(),{op:'restart',targetId:'fetch'});await route.fulfill({json:{controlId:'ui-control',targetId:'fetch',op:'restart',status:'AWAITING_PERMISSION'}});});
- await page.route('**/api/runtime/controls/ui-control/decision',async route=>{assert.equal(route.request().postDataJSON().approve,false);await route.fulfill({json:{}});});
+  await page.route('**/api/runtime/control',async route=>{const body=route.request().postDataJSON();if(body.targetId==='fetch'){assert.deepEqual(body,{op:'restart',targetId:'fetch'});await route.fulfill({json:{controlId:'ui-control',targetId:'fetch',op:'restart',status:'AWAITING_PERMISSION'}});return;}assert.deepEqual(body,{op:'up',targetId:'miit'});await route.fulfill({json:{controlId:'miit-control',targetId:'miit',op:'up',status:'AWAITING_PERMISSION'}});});
+  await page.route('**/api/runtime/controls/ui-control/decision',async route=>{assert.equal(route.request().postDataJSON().approve,false);await route.fulfill({json:{}});});
+  await page.route('**/api/runtime/controls/miit-control/decision',async route=>{assert.equal(route.request().postDataJSON().approve,true);await route.fulfill({json:{}});});
  await page.goto(base);await page.waitForFunction(()=>!document.querySelector('#send').disabled);
- assert.equal(await page.locator('.workspace-tab').count(),5);
+  assert.equal(await page.locator('.workspace-tab').count(),6);
  assert.equal(await page.locator('#resultBody').isVisible(),false,'idle conversation must not show an empty result');
  const nav=await page.locator('#workspaceNav').boundingBox(),area=await page.locator('.workspace-area').boundingBox();
  assert.ok(nav.x+nav.width<=area.x,'navigation must sit to the left of the workspace');
  await page.locator('#prompt').fill('保留 Service 草稿');
  await page.locator('[data-workspace="fetch"]').click();assert.equal(await page.locator('#independentWorkspace').isVisible(),true);assert.equal(await page.locator('#conversationWorkspace').isVisible(),false);
  assert.equal(await page.locator('#independentOpen').getAttribute('href'),'https://fetch.example.test/');
- await page.locator('#independentRuntime [data-op="restart"]').click();await page.waitForSelector('#independentRuntime [data-decision="reject"]');await page.locator('#independentRuntime [data-decision="reject"]').click();
- assert.equal(await page.locator('#runtime, #runtimeToggle').count(),0,'global Runtime UI must be removed');
- await page.locator('[data-workspace="knbase"]').click();assert.match(await page.locator('#independentHint').textContent(),/本机地址/);
+  await page.locator('#independentRuntime [data-op="restart"]').click();await page.waitForSelector('#independentRuntime [data-decision="reject"]');await page.locator('#independentRuntime [data-decision="reject"]').click();
+  assert.equal(await page.locator('#runtime, #runtimeToggle').count(),0,'global Runtime UI must be removed');
+  await page.locator('[data-workspace="miit"]').click();assert.equal(await page.locator('#independentTitle').textContent(),'MIIT');assert.equal(await page.locator('#independentWorkspace').isVisible(),true);assert.equal(await page.locator('#independentRuntime [data-op="up"][data-target="miit"]').count(),1);
+  await page.locator('#independentRuntime [data-op="up"][data-target="miit"]').click();await page.waitForSelector('#independentRuntime [data-decision="approve"]');await page.locator('#independentRuntime [data-decision="approve"]').click();
+  send({type:'runtime.snapshot',protocolVersion:1,workerId:'ui-worker',sequence:2,generatedAt:new Date().toISOString(),dependencies:[],services:[{id:'fetch',label:'Fetch',status:'ONLINE',openUrl:'https://fetch.example.test/'},{id:'miit',workspace:'miit',label:'mashang-miit',status:'ONLINE',openUrl:'http://127.0.0.1:8790'},{id:'myknbase',label:'Knbase',status:'ONLINE',openUrl:'http://127.0.0.1:4317/'}],jobs:[],operations:[]});
+  await page.waitForFunction(()=>document.querySelector('#independentOpen').getAttribute('href')==='http://127.0.0.1:8790/');assert.match(await page.locator('#independentHeading').textContent(),/由 MIIT 自身维护/);
+  await page.locator('[data-workspace="knbase"]').click();assert.match(await page.locator('#independentHint').textContent(),/本机地址/);
  await page.locator('[data-workspace="publish"]').click();assert.equal(await page.locator('#workspaceNotice').isVisible(),true);assert.equal(await page.locator('#prompt').inputValue(),'');
  await page.locator('#prompt').fill('保留 Publish 草稿');await page.locator('[data-workspace="service"]').click();assert.equal(await page.locator('#prompt').inputValue(),'保留 Service 草稿');assert.equal(tasks.length,0,'navigation must never execute a task');
  await page.locator('#prompt').fill('分析测试问题');await page.locator('#send').click();await until(()=>tasks.length===1);
@@ -72,5 +77,5 @@ try{
   if(!workerOnline || age) assert.equal(await page.locator('.compact-service [data-op]').count(),0);
  }
  assert.deepEqual(errors,[]);
- console.log('Browser UI passed: four workspaces, selection without execution, isolated drafts/sessions/results, independent links, Markdown attachment preview, desktop/mobile layout');
+  console.log('Browser UI passed: six workspaces, MIIT independent runtime controls and UI link, selection without execution, isolated drafts/sessions/results, Markdown attachment preview, desktop/mobile layout');
 }finally{await browser?.close();worker?.terminate();if(hub.exitCode===null){const exit=once(hub,'exit');hub.kill('SIGKILL');await exit;}rmSync(temp,{recursive:true,force:true});}

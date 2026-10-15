@@ -224,7 +224,7 @@ export function initRuntimeUI() {
     const services = snapshot?.services || [];
     const jobs = snapshot?.jobs || [];
     const operations = snapshot?.operations || [];
-    const mount = workspace === "aksignal" ? conversationMount : ["fetch", "knbase"].includes(workspace) ? independentMount : conversationMount;
+    const mount = workspace === "aksignal" ? conversationMount : ["fetch", "knbase", "miit"].includes(workspace) ? independentMount : conversationMount;
     if (mount) {
       // Older Workers may omit workspace metadata. Only presentation uses these legacy IDs/groups.
       const belongs = item => (item.workspace || ({fetch:"fetch",myknbase:"knbase"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;

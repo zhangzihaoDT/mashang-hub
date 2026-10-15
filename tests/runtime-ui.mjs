@@ -33,6 +33,7 @@ let controlsPayload = [];
 function runtimeResponse() {
   return { workerOnline: true, receivedAt: null, snapshot: { workerId: "local-worker", generatedAt: new Date().toISOString(), dependencies: [{ id: "opencode", label: "OpenCode", status: "ONLINE" }], services: [
     { id: "fetch", label: "mashang-fetch", group: "APPS", status: "ONLINE", managed: false, openUrl: "http://127.0.0.1:7860" },
+    { id: "miit", workspace: "miit", label: "mashang-miit", group: "APPS", status: "OFFLINE", managed: false, openUrl: "http://127.0.0.1:8790" },
     { id: "myknbase", label: "myknbase", group: "APPS", status: "OFFLINE", managed: false, openUrl: "http://127.0.0.1:7870" },
     { id: "scheduler", label: "Scheduler", group: "MASHANG-SERVICE", summary: "后台服务", status: "ONLINE", managed: true },
     { id: "aksignal-scheduler", workspace: "aksignal", label: "AKsignal Scheduler", group: "AKSIGNAL", summary: "独立调度", status: "OFFLINE", managed: false },
@@ -74,6 +75,10 @@ assert.match(aksignalPanel, /data-op="run" data-target="aksignal-daily-maintenan
 runtimeUI.setWorkspace("fetch");
 assert.match(elements.get("independentRuntime").innerHTML, /打开工作台/);
 assert.match(elements.get("independentRuntime").innerHTML, /data-op="restart" data-target="fetch"/);
+runtimeUI.setWorkspace("miit");
+assert.match(elements.get("independentRuntime").innerHTML, /<dt>Runtime ID<\/dt><dd>miit<\/dd>/);
+assert.match(elements.get("independentRuntime").innerHTML, /data-op="up" data-target="miit"/);
+assert.doesNotMatch(elements.get("independentRuntime").innerHTML, /打开工作台 ↗/);
 runtimeUI.setWorkspace("knbase");
 assert.match(elements.get("independentRuntime").innerHTML, /data-op="up" data-target="myknbase"/);
 runtimeUI.update({type:"runtime.control.updated",controlId:"active-1",op:"up",targetId:"myknbase",status:"RUNNING"});

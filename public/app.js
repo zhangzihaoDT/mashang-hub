@@ -56,11 +56,16 @@ function renderConversation() {
   renderPublication(); renderSession(); renderMessages(); renderResult(state.assistantText, state.resultPlainText); renderArtifacts(); setStatus(state.status); refreshExecutionInfo(); updateCancelVisibility(); updateSendAvailability(); renderDebug();
 }
 function renderIndependent() {
-  const isFetch = currentWorkspace === 'fetch';
-  const service = runtimeSnapshot?.services?.find(item => item.id === (isFetch ? 'fetch' : 'myknbase'));
-  $('#independentTitle').textContent = isFetch ? 'Fetch' : 'Knbase';
-  $('#independentHeading').textContent = isFetch ? '独立工作台 · 由 Fetch 自身维护' : '独立工作台 · 由 Knbase 自身维护';
-  $('#independentDescription').textContent = isFetch ? '数据采集 · 内容解析 · 结果管理' : '资料浏览 · 知识检索 · 文档管理';
+  const app = ({
+    fetch: {serviceId:'fetch', title:'Fetch', heading:'独立工作台 · 由 Fetch 自身维护', description:'数据采集 · 内容解析 · 结果管理'},
+    knbase: {serviceId:'myknbase', title:'Knbase', heading:'独立工作台 · 由 Knbase 自身维护', description:'资料浏览 · 知识检索 · 文档管理'},
+    miit: {serviceId:'miit', title:'MIIT', heading:'独立工作台 · 由 MIIT 自身维护', description:'公告采集 · 任务执行 · 报告浏览'},
+  })[currentWorkspace];
+  if (!app) return;
+  const service = runtimeSnapshot?.services?.find(item => item.id === app.serviceId);
+  $('#independentTitle').textContent = app.title;
+  $('#independentHeading').textContent = app.heading;
+  $('#independentDescription').textContent = app.description;
   const link = $('#independentOpen');
   let url = null; try { const candidate = new URL(service?.openUrl); if (['http:','https:'].includes(candidate.protocol) && !candidate.username && !candidate.password) url = candidate; } catch {}
   link.classList.toggle('hidden', !url); if (url) link.href = url.href; else link.removeAttribute('href');
@@ -158,7 +163,7 @@ function updateSendAvailability() {
   $('#send').disabled = (state === conversations.aksignal && !latestMarketArtifact() && !state.marketArtifact) || state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
   $('#previewPublication').disabled = state.turnActive || submitting || !state.connected || !runtimeSnapshot?.operations?.some(item=>item.workspace === 'publish' && item.requiresSnapshot && item.enabled);
 }
-function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); }
+function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); }
 function taskLabel(status) { return state === conversations.publish ? ({RUNNING:'正在起草',COMPLETED:'草稿已完成'})[status] || TASK_LABELS[status] || status : TASK_LABELS[status] || status; }
 function setStatus(status, label) { state.status = status; refreshExecutionInfo(); const el = $("#runState"); el.className = `run-state ${status.toLowerCase()}`; el.querySelector("span:last-child").textContent = label || taskLabel(status); if (state.turnActive) recordProcess(status, label); }
 function setStatusLabel(label) { const el = optional("#runState"); if (el) el.querySelector("span:last-child").textContent = label; }
@@ -402,7 +407,7 @@ function processServerEvent(event) {
   if (event.taskId && !state.activeTaskId && state.turnActive) { state.earlyEvents.push(event); return; }
   logEvent(event);
   if (event.type === 'permission.resolved') { for (const item of [...(state.permissionQueue || [])]) if (!event.requestId || item.id === event.requestId) resolvePermission(state, item.id); return; }
-  if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); if (event.type === "runtime.snapshot") { runtimeSnapshot = event.snapshot; updateSendAvailability(); if(currentWorkspace === "aksignal") renderMarketBinding(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); } return; }
+  if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); if (event.type === "runtime.snapshot") { runtimeSnapshot = event.snapshot; updateSendAvailability(); if(currentWorkspace === "aksignal") renderMarketBinding(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); } return; }
   if (event.type === "worker.status") { state.models = event.models || state.models; for (const context of Object.values(conversations)) if (context) context.models = state.models; if (event.models) renderModelOptions(event.models); setConnection(["ONLINE", "BUSY"].includes(event.status), event.status); return; }
   if (event.type === "session.mapped") { state.openCodeSessionId = event.openCodeSessionId; renderDebug(); return; }
   if (event.type === "task.timeout.warning") { if (!isTerminalState()) { setStatusLabel("运行超时，正在尝试取消"); updateRunningLabel("运行超时，正在尝试取消"); } return; }
@@ -457,5 +462,5 @@ $('#newSession').addEventListener('click', async () => {
 
 optional("#debugToggle")?.addEventListener("click", () => optional("#debug")?.classList.toggle("hidden")); optional("#debugClose")?.addEventListener("click", () => optional("#debug")?.classList.add("hidden"));
 const runtimeUI = initRuntimeUI();
-async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); fetch("/api/runtime").then(response=>response.json()).then(data=>{ runtimeSnapshot = data.snapshot; updateSendAvailability(); if (["fetch","knbase"].includes(currentWorkspace)) renderIndependent(); }).catch(()=>{}); renderMessages(); connectEvents(); }
+async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); fetch("/api/runtime").then(response=>response.json()).then(data=>{ runtimeSnapshot = data.snapshot; updateSendAvailability(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); }).catch(()=>{}); renderMessages(); connectEvents(); }
 initialize();

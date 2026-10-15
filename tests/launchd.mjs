@@ -20,6 +20,9 @@ const env = {
   MASHANG_PUBLISH_ENABLED: "1",
   MASHANG_PUBLISH_ROOT: "/mock/publish",
   MASHANG_PUBLISH_GATE_DIR: "/mock/gate",
+  MASHANG_MIIT_ROOT: "/mock/miit",
+  MASHANG_MIIT_URL: "http://127.0.0.1:9879",
+  MASHANG_MIIT_UI_URL: "https://miit.example.test/",
 };
 
 const agents = buildLaunchdAgents({ root, home, env, nodePath: "/opt/homebrew/bin/node", opencodePath: env.OPENCODE_BIN });
@@ -38,6 +41,9 @@ assert.equal(worker.plist.EnvironmentVariables.OPENCODE_URL, "http://127.0.0.1:4
 assert.equal(worker.plist.EnvironmentVariables.MASHANG_PUBLISH_ENABLED, "1");
 assert.equal(worker.plist.EnvironmentVariables.MASHANG_PUBLISH_ROOT, "/mock/publish");
 assert.equal(worker.plist.EnvironmentVariables.MASHANG_PUBLISH_GATE_DIR, "/mock/gate");
+assert.equal(worker.plist.EnvironmentVariables.MASHANG_MIIT_ROOT, "/mock/miit");
+assert.equal(worker.plist.EnvironmentVariables.MASHANG_MIIT_URL, "http://127.0.0.1:9879");
+assert.equal(worker.plist.EnvironmentVariables.MASHANG_MIIT_UI_URL, "https://miit.example.test/");
 assert.equal(opencode.plist.EnvironmentVariables.MASHANG_PUBLISH_ENABLED, undefined);
 for (const agent of agents) {
   assert.equal(agent.plist.RunAtLoad, true);

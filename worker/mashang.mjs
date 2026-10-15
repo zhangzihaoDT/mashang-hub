@@ -24,12 +24,15 @@ Environment:
   MASHANG_SERVICE_ROOT   mashang-service checkout (scheduler logs)
   MASHANG_HUB_ROOT       mashang-hub checkout (worker pid file, hub logs)
   MASHANG_FETCH_ROOT     mashang-fetch checkout (app log, dev.sh)
+  MASHANG_MIIT_ROOT      mashang-miit checkout (workbench log, dev.sh)
   MYKNBASE_ROOT          myknbase checkout (also registers the "myknbase" workspace)
   MASHANG_WORKSPACES_CONFIG  optional JSON array/file of {id,label,root,outputRoots} workspaces
   MASHANG_RUNTIME_DIR    managed records + start logs (default <hub>/.local/runtime)
   MASHANG_SCHEDULER_SERIES  optional SERIES passed to the scheduler/daily job
   OPENCODE_URL           default http://127.0.0.1:4096
   MASHANG_FETCH_URL      default http://127.0.0.1:7860
+  MASHANG_MIIT_URL       default http://127.0.0.1:8790
+  MASHANG_MIIT_UI_URL    optional browser-accessible MIIT workbench URL
   MYKNBASE_URL           default http://127.0.0.1:4317
   HUB_URL                worker registration target (default ws://127.0.0.1:3000)
   MASHANG_RUNTIME_CONFIG path to a JSON {services,jobs,operations} override
