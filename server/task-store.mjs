@@ -18,7 +18,7 @@ const transitions = {
   INTERRUPTED: ['UNKNOWN', 'RUNNING', 'UNCERTAIN', 'COMPLETED', 'FAILED', 'CANCELLED'],
   UNCERTAIN: ['UNKNOWN', 'COMPLETED', 'FAILED'],
 };
-const fields = ['taskId', 'conversationId', 'source', 'executor', 'workspaceId', 'workerId', 'status', 'attempt', 'attemptId', 'dispatchId', 'operationId', 'policy', 'createdAt', 'startedAt', 'updatedAt', 'finishedAt', 'lastProgressAt', 'permissionStartedAt', 'permissionWaitMs', 'reason', 'legacyStatus', 'turnId', 'model', 'op', 'targetId', 'hasText', 'artifactCount', 'externalEffectPossible', 'cancellationSupported', 'cancelRequested', 'cancelSource', 'snapshotRef', 'digest', 'proof', 'resultUrl'];
+const fields = ['taskId', 'conversationId', 'source', 'executor', 'workspaceId', 'workerId', 'status', 'attempt', 'attemptId', 'dispatchId', 'operationId', 'policy', 'createdAt', 'startedAt', 'updatedAt', 'finishedAt', 'lastProgressAt', 'permissionStartedAt', 'permissionWaitMs', 'reason', 'legacyStatus', 'turnId', 'model', 'op', 'targetId', 'hasText', 'artifactCount', 'externalEffectPossible', 'cancellationSupported', 'cancelRequested', 'cancelSource', 'snapshotRef', 'digest', 'proof', 'resultUrl', 'resultPreview', 'actionLabel', 'scopedAuthorization', 'originTaskId'];
 export function taskRecord(input) { return Object.fromEntries(fields.filter(key => input[key] !== undefined).map(key => [key, input[key]])); }
 
 export class TaskStore {

@@ -1,3 +1,4 @@
+import { contentCardHTML, contentCopy } from './content-ui.js';
 import { transitionTaskState } from "./task-state.js";
 import { initRuntimeUI } from "./runtime-ui.js";
 
@@ -18,9 +19,28 @@ let runtimeSnapshot = null;
 const workspaceCopy = {
   service: { title:'Service', eyebrow:'BUSINESS & RESEARCH', placeholder:'描述业务问题、研究主题或报告要求…', welcome:'今天，想研究什么？', description:'提出业务问题，查看分析结论、研究报告与附件。' },
   aksignal: {title:'AKsignal',eyebrow:'MARKET FACTS',placeholder:'围绕本期市场事实提问…',welcome:'读懂本期市场',description:'基于正式日报讨论市场方向、趋势与底部位置。'},
-  publish: { title:'Publish', eyebrow:'DRAFT & REVIEW', placeholder:'描述写作主题，或粘贴需要整理的正文…', welcome:'把想法，整理成文字。', description:'起草、修改和审阅正文。最终正文经预览、审批后由授权 Worker 执行。' },
+  publish: { title:'Content', eyebrow:'NOTES & PUBLISH', placeholder:'描述写作主题，或粘贴需要整理的正文…', welcome:'把想法，整理成文字。', description:'记录想法，整理笔记，也可以同步 Flomo 或发布微博。' },
 };
 function sessionStorageKey(context = state) { return context === conversations.aksignal ? 'mashang-hub-aksignal-session' : context === conversations.publish ? 'mashang-hub-publish-session' : 'mashang-hub-session'; }
+function updateContentMode(mode = state.contentMode || 'notes') {
+  state.contentMode = mode;
+  const active = currentWorkspace === 'publish';
+  document.body.classList.toggle('content-workspace', active);
+  $('#contentModes').classList.toggle('hidden', !active);
+  for (const button of $('#contentModes').querySelectorAll('button')) button.setAttribute('aria-pressed', String(button.dataset.contentMode === mode));
+  const publishing = active && mode === 'publish';
+  for (const id of ['previewPublication','publicationVisibility','publicationStatement']) $('#'+id).classList.toggle('hidden', !publishing);
+  $('#workspaceNotice').classList.add('hidden');
+  if (active) $('#debug').classList.add('hidden');
+  if (active) $('#prompt').placeholder = contentCopy[mode].placeholder;
+  const span = $('#connection span');
+  if (active) span.textContent = state.connected ? '已连接' : '连接中…';
+}
+$('#contentModes').addEventListener('click', event => {
+  const mode = event.target.closest('[data-content-mode]')?.dataset.contentMode;
+  if (!mode) return;
+  updateContentMode(mode); renderMessages();
+});
 function refreshExecutionInfo() {
   $('#resultBody').classList.toggle('hidden', !state.turnActive && !state.activeTaskId && !state.assistantText && !state.artifacts.length && !state.operationControl);
   $('#taskTitle').textContent = state.taskTitle || '等待一项新任务';
@@ -32,11 +52,12 @@ function renderPublication() {
   const control = context.operationControl;
   mount.classList.toggle('hidden', !control || state !== conversations.publish);
   if (!control) { mount.innerHTML = ''; return; }
-  const labels = { DRAFT:'草稿', PENDING_APPROVAL:'待审批', APPROVED:'已批准', RUNNING:'发布执行中', COMPLETED:'发布完成', FAILED:'发布失败', UNKNOWN:'待核验', CANCELLED:'审批已失效' };
-  mount.innerHTML = `<strong>${escapeHTML(labels[control.status] || control.status)}</strong><p>操作 ${escapeHTML(control.operationId || '')}</p>`
-    + (control.status === 'PENDING_APPROVAL' && state.reviewedDigest === control.digest ? '<button type="button" id="approvePublication">我已审阅最终正文，确认发布</button>' : '')
-    + (control.status === 'UNKNOWN' ? '<p>结果尚未确认，不会自动重复发布。</p><button type="button" id="verifyPublication">核验发布结果</button>' : '')
-    + (control.resultUrl ? `<a href="${escapeHTML(control.resultUrl)}" target="_blank" rel="noopener noreferrer">查看发布链接 ↗</a>` : '');
+  const action = control.actionLabel || '发布微博';
+  const labels = { DRAFT:'', PENDING_APPROVAL:'请确认本次内容', APPROVED:'正在处理…', RUNNING:'正在处理…', COMPLETED: action === '发布微博' ? '已发布微博' : '已同步到 Flomo', FAILED: action === '发布微博' ? '发布失败，请检查后再操作。' : '同步失败，请检查后再操作。', UNKNOWN:'尚未确认是否发送成功，请先核对', CANCELLED:'内容已修改，请重新预览' };
+  mount.innerHTML = `<p class="content-feedback ${['PENDING_APPROVAL','UNKNOWN'].includes(control.status) ? 'needs-attention' : ''}" role="status">${escapeHTML(labels[control.status] || '')}</p>`
+    + (control.status === 'PENDING_APPROVAL' && state.reviewedDigest === control.digest ? `<button type="button" id="approvePublication">确认${escapeHTML(action)}</button>` : '')
+    + (control.status === 'UNKNOWN' ? '<button type="button" id="verifyPublication">检查结果</button>' : '')
+    + (control.resultUrl ? `<a href="${escapeHTML(control.resultUrl)}" target="_blank" rel="noopener noreferrer">查看微博 ↗</a>` : '');
   optional('#approvePublication')?.addEventListener('click', async event => {
     event.target.disabled = true;
     try {
@@ -93,6 +114,8 @@ function switchWorkspace(kind) {
   currentWorkspace = kind;
   updateMarketComposer();
   runtimeUI.setWorkspace(kind);
+  document.body.classList.toggle('content-workspace', kind === 'publish');
+  $('#contentModes').classList.toggle('hidden', kind !== 'publish');
   for (const button of $('#workspaceNav').querySelectorAll('[data-workspace]')) { const active = button.dataset.workspace === kind; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); }
   const conversational = kind === 'service' || kind === 'publish' || kind === 'aksignal';
   $('#conversationWorkspace').classList.toggle('hidden', !conversational); $('#independentWorkspace').classList.toggle('hidden', conversational || kind === 'aksignal'); $('#businessWorkspace').classList.add('hidden'); $('#marketReport').classList.toggle('hidden',kind !== 'aksignal'); $('#marketBinding').classList.toggle('hidden',kind !== 'aksignal');
@@ -107,6 +130,8 @@ function switchWorkspace(kind) {
   for (const id of ['publicationVisibility','publicationStatement']) $('#'+id).classList.toggle('hidden', kind !== 'publish');
   $('#publicationVisibility').value = state.publicationVisibility || 'public'; $('#publicationStatement').value = state.publicationStatement || 'original';
   $('#prompt').placeholder = copy.placeholder; $('#prompt').value = state.draft || ''; autosizePrompt();
+  updateContentMode();
+  if(kind !== 'publish') setConnection(state.connected, state.workerStatus);
   renderConversation(); renderModelOptions(state.models); if(kind === "aksignal") renderMarketBinding();
   if (!state.session) ensureSession().catch(error => { if (state === conversations[kind]) pushNotice(error.message); });
 }
@@ -163,8 +188,8 @@ function updateSendAvailability() {
   $('#send').disabled = (state === conversations.aksignal && !latestMarketArtifact() && !state.marketArtifact) || state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
   $('#previewPublication').disabled = state.turnActive || submitting || !state.connected || !runtimeSnapshot?.operations?.some(item=>item.workspace === 'publish' && item.requiresSnapshot && item.enabled);
 }
-function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); }
-function taskLabel(status) { return state === conversations.publish ? ({RUNNING:'正在起草',COMPLETED:'草稿已完成'})[status] || TASK_LABELS[status] || status : TASK_LABELS[status] || status; }
+function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = currentWorkspace === 'publish' ? (connected ? '已连接' : '连接中…') : `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); }
+function taskLabel(status) { return state === conversations.publish ? ({RUNNING:'正在整理',COMPLETED:'已完成',INTERRUPTED:'处理已中断',WAITING_PERMISSION:'等待确认'})[status] || TASK_LABELS[status] || status : TASK_LABELS[status] || status; }
 function setStatus(status, label) { state.status = status; refreshExecutionInfo(); const el = $("#runState"); el.className = `run-state ${status.toLowerCase()}`; el.querySelector("span:last-child").textContent = label || taskLabel(status); if (state.turnActive) recordProcess(status, label); }
 function setStatusLabel(label) { const el = optional("#runState"); if (el) el.querySelector("span:last-child").textContent = label; }
 function isTerminalState() { return ["COMPLETED", "FAILED", "INTERRUPTED", "TIMEOUT", "CANCELLED"].includes(state.taskState); }
@@ -181,7 +206,9 @@ function applyTaskEvent(taskId, type, label) {
 function renderSession() { $("#sessionMeta").textContent = state.session ? `当前对话 · ${state.selectedModel ? modelLabel(state.selectedModel) : "选择执行模型"}` : "正在创建对话…"; }
 function renderMessage(item) {
   if (item.role === "user") return `<div class="message user"><div class="label">任务描述</div><div class="bubble">${escapeHTML(item.text)}</div></div>`;
+  if (item.kind === 'result' && item.contentCard) return `<article class="history-result">${contentCardHTML(item.contentCard, true)}</article>`;
   if (item.kind === 'result') return `<article class="history-result"><div class="history-result-head"><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(TASK_LABELS[item.status] || item.status)}</span></div><div>${item.plainText ? `<pre>${escapeHTML(item.text)}</pre>` : markdown(item.text)}</div>${(item.artifacts || []).map(artifact => `<div class="history-attachment"><span>${escapeHTML(artifact.name)}</span><a href="${artifactURL('/api/artifacts/content', artifact.artifactId)}" target="_blank" rel="noopener">查看附件</a><a href="${artifactURL('/api/artifacts/download', artifact.artifactId)}" download>下载</a></div>`).join('')}</article>`;
+  if (state === conversations.publish && item.kind === "process") return '';
   if (item.kind === "notice") return `<div class="message assistant notice ${escapeHTML(item.level || "info")}"><div class="label">任务提示</div><div class="bubble">${escapeHTML(item.text)}</div></div>`;
   const steps = (item.steps || []).map((step) => `<li class="step ${escapeHTML(step.status)}"><span class="step-dot"></span><span>${escapeHTML(step.label)}</span></li>`).join("");
   const meta = item.model ? `<div class="message-meta">${escapeHTML(item.model.label || item.model.modelID || "OpenCode")}</div>` : "";
@@ -198,7 +225,8 @@ function permissionHTML() {
 function renderMessages() {
   const container = $("#messages");
   const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
-  const body = state.messages.length ? state.messages.map(renderMessage).join("") : `<div class="welcome"><img class="avatar" src="/raccoon.png" width="42" height="42" alt="mashang" /><h2>${workspaceCopy[state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : "service"].welcome}</h2><p>${workspaceCopy[state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : "service"].description}</p></div>`;
+  const copy = state === conversations.publish ? contentCopy[state.contentMode || 'notes'] : workspaceCopy[state === conversations.aksignal ? 'aksignal' : 'service'];
+  const body = state.messages.length ? state.messages.map(renderMessage).join("") : `<div class="welcome"><img class="avatar" src="/raccoon.png" width="42" height="42" alt="mashang" /><h2>${copy.welcome}</h2><p>${copy.description}</p></div>`;
   const reply = $("#resultBody");
   reply.remove();
   container.innerHTML = body + (state.pendingPermission ? permissionHTML() : "");
@@ -220,7 +248,7 @@ function recordProcess(status, label) {
 function pushProcessNote(label) { const message = ensureProcessMessage(); message.steps.push({ label, status: "note" }); renderMessages(); }
 function updateRunningLabel(label) { const message = currentProcessMessage(); const step = message?.steps[message.steps.length - 1]; if (!step || step.status !== "running" || step.label === label) return; step.label = label; renderMessages(); }
 function pushNotice(text, level = "error") { state.messages.push({ role: "assistant", kind: "notice", text, level }); renderMessages(); }
-function renderResult(text, plainText = false) { $("#resultContent").innerHTML = text ? (plainText ? `<pre style="white-space:pre-wrap">${escapeHTML(text)}</pre>` : markdown(text)) : ""; }
+function renderResult(text, plainText = false) { const content = typeof state !== 'undefined' && typeof conversations !== 'undefined' && state === conversations.publish; const card = content && state.contentCard; const publicationDraft = content && !card && text && !state.operationControl && /微博/.test(state.taskTitle || ''); $("#resultContent").innerHTML = card ? contentCardHTML(card) : text ? (plainText ? `<pre style="white-space:pre-wrap">${escapeHTML(text)}</pre>` : markdown(text)) : ''; if (publicationDraft) $("#resultContent").innerHTML += '<div class="content-actions"><button type="button" class="quiet" data-draft-action="edit">修改</button><button type="button" class="content-primary" data-draft-action="publish">预览并发布</button></div>'; }
 function artifactCandidates(text = "") { const pattern = /(?:^|[\s"'`(])((?:[\p{L}\p{N}_.-]+\/)+[\p{L}\p{N}_.-]+\.(?:md|html|csv|png))(?=$|[\s"'`),.;])/gu; return [...text.matchAll(pattern)].map((match) => match[1]); }
 function formatBytes(bytes) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
 function artifactURL(endpoint, artifactId) { return `${endpoint}?artifactId=${encodeURIComponent(artifactId)}`; }
@@ -315,15 +343,18 @@ async function restoreSession(context) {
   const latest = (await api('/api/tasks')).find(task => task.source === 'conversation' && task.conversationId === context.session.id );
   if (context === conversations.publish) {
     const controls = await api('/api/runtime/controls');
-    const control = controls.filter(item => item.snapshotRef && item.conversationId === context.session.id).sort((a,b)=>b.createdAt-a.createdAt)[0];
+    const control = controls.filter(item => item.snapshotRef && item.conversationId === context.session.id && (!item.originTaskId || item.originTaskId === latest?.taskId)).sort((a,b)=>b.createdAt-a.createdAt)[0];
     if (control) {
       context.operationControl = control;
       try {
         const preview = await api(`/api/runtime/controls/${encodeURIComponent(control.controlId)}/preview`);
-        context.assistantText = preview.text; context.resultPlainText = true; context.reviewedDigest = preview.digest;
-      } catch { context.assistantText = 'Worker 快照暂不可读，请恢复连接后重新打开工作空间。'; }
+        context.assistantText = preview.text; context.contentCard = preview.contentCard; context.resultPlainText = !preview.contentCard; context.reviewedDigest = preview.digest;
+      } catch { context.assistantText = '内容暂时无法读取，请连接恢复后再查看。'; }
       if (state === context) renderConversation();
     }
+  }
+  if (context === conversations.publish && latest?.resultPreview) {
+    try { const preview = await api(`/api/tasks/${encodeURIComponent(latest.taskId)}/preview`); context.contentCard = preview.contentCard; context.assistantText = preview.text; if(state === context) renderConversation(); } catch {}
   }
   if (latest && !context.activeTaskId) {
     context.activeTaskId = latest.taskId; context.turnId = latest.turnId;
@@ -340,13 +371,22 @@ async function restoreSession(context) {
 }
 function parseMessage(data) { return (data?.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n"); }
 function actualModel(info) { const modelID = info?.modelID || info?.model?.id; const providerID = info?.providerID || info?.model?.providerID; const known = state.models?.find((model) => model.modelID === modelID && model.providerID === providerID); return { label: known ? modelLabel(known) : modelID ? `${providerID || ""}/${modelID}` : "Unknown model", modelID, providerID, cost: info?.cost, tokens: info?.tokens }; }
-async function sendPrompt(text, publicationPreview = false) {
+async function directContentAuthorization(text) {
+  if (!globalThis.crypto?.subtle) return null;
+  const match = /^(?:请)?直接同步(?:到)?\s*Flomo\s*[：:]([\s\S]+)$/i.exec(text);
+  const source = match?.[1] || (/^(?:请)?直接同步(?:到)?\s*Flomo[。！!\s]*$/i.test(text) ? state.contentCard?.text : null);
+  if (!source) return null;
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(source)));
+  return { targetId: 'notes-flomo', sourceDigest: [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, '0')).join('') };
+}
+async function sendPrompt(text, publicationPreview = false, contentAction = null) {
   if (state.turnActive || submitting) return;
   if(state === conversations.aksignal && !bindMarket()) throw new Error("暂无可引用的正式日报");
   submitting = true;
-  if (state.activeTaskId) state.messages.push({ role:'assistant',kind:'result',text:state.assistantText,status:state.taskState,title:state.taskTitle,plainText:state.resultPlainText,artifacts:state.artifacts.map(item=>({...item})) });
+  if (state.activeTaskId) state.messages.push({ role:'assistant',kind:'result',text:state.assistantText,status:state.taskState,title:state.taskTitle,plainText:state.resultPlainText,contentCard:state.contentCard,artifacts:state.artifacts.map(item=>({...item})) });
   state.taskTitle = text.trim().slice(0, 48); state.resultPlainText = false; state.startedAt = Date.now(); state.finishedAt = null;
   state.messages.push({ role: "user", text });
+  state.contentCard = null; state.pendingContentAction = null;
   state.assistantText = ""; state.artifactScanText = ""; state.artifacts = [];
   state.activeTaskId = null; state.taskState = "UNDERSTANDING"; state.turnActive = true; state.pendingPermission = null; state.permissionQueue = [];
   renderMessages(); renderResult(""); renderArtifacts(); setStatus("UNDERSTANDING"); updateCancelVisibility(); $("#send").disabled = true;
@@ -355,7 +395,8 @@ async function sendPrompt(text, publicationPreview = false) {
     if(state === conversations.aksignal) {bindMarket();renderMarketBinding();}
     if (!publicationPreview && !state.selectedModel?.available) throw new Error("请选择可用模型");
     state.operationControl = null; renderPublication();
-    const response = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/message`, { method: "POST", body: JSON.stringify({ model: state.selectedModel ? { providerID: state.selectedModel.providerID, modelID: state.selectedModel.modelID } : null, workspaceId: state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : null, marketArtifactId: state === conversations.aksignal ? state.marketArtifact?.artifactId : undefined, parts: [{ type: "text", text: state === conversations.publish && !publicationPreview ? `这是内容起草与审阅请求，只生成或修改文字，不执行发布。\n\n${text}` : text }], confirmationId: state.confirmationId }) });
+    const scopedAuthorization = state === conversations.publish ? await directContentAuthorization(text) : null;
+    const response = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/message`, { method: "POST", body: JSON.stringify({ model: state.selectedModel ? { providerID: state.selectedModel.providerID, modelID: state.selectedModel.modelID } : null, workspaceId: state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : null, contentAction, scopedAuthorization, marketArtifactId: state === conversations.aksignal ? state.marketArtifact?.artifactId : undefined, parts: [{ type: "text", text }], confirmationId: state.confirmationId }) });
     if (response.taskId) { if (response.turnId) state.turnId = response.turnId; applyTaskEvent(response.taskId, "task.accepted"); }
     for (const event of state.earlyEvents.splice(0)) handleServerEvent(event);
     renderDebug();
@@ -388,7 +429,7 @@ function showPermission(request) {
 function handleServerEvent(event) {
   if (event.type === 'runtime.control.updated' && event.snapshotRef) {
     const context = Object.values(conversations).find(item => item?.session?.id === event.conversationId);
-    if (context && (!context.operationControl || context.operationControl.controlId === event.controlId || event.status === 'PENDING_APPROVAL')) context.operationControl = event;
+    if (context && (!event.originTaskId || !context.activeTaskId || context.activeTaskId === event.originTaskId) && (!context.operationControl || context.operationControl.controlId === event.controlId || event.status === 'PENDING_APPROVAL')) context.operationControl = event;
     renderPublication(); refreshExecutionInfo();
   }
   if (event.type === "permission.requested" && !event.taskId && event.request?.sessionID) {
@@ -416,7 +457,7 @@ function processServerEvent(event) {
   if (event.type === "task.accepted") { applyTaskEvent(event.taskId, "task.accepted"); return; }
   if (event.type === "task.running") { if (!state.pendingPermission) applyTaskEvent(event.taskId, "task.running"); return; }
   if (event.type === "agent.message.delta" && event.taskId === state.activeTaskId) { state.assistantText += event.text || ""; updateRunningLabel("正在生成结果"); return; }
-  if (event.type === "agent.message.completed" && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, "agent.message.completed"); if (Object.hasOwn(event, "confirmationId")) state.confirmationId = event.confirmationId; completeAssistant(event.text || state.assistantText, event.actualModel, event.plainText === true); if (event.operationControl) { state.operationControl = event.operationControl; state.reviewedDigest = event.operationControl.digest; renderPublication(); } return; }
+  if (event.type === "agent.message.completed" && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, "agent.message.completed"); if (Object.hasOwn(event, "confirmationId")) state.confirmationId = event.confirmationId; if(event.contentCard) state.contentCard = event.contentCard; if(event.operationControl) state.operationControl = event.operationControl; completeAssistant(event.text || state.assistantText, event.actualModel, event.plainText === true); if (event.operationControl) { state.operationControl = event.operationControl; state.reviewedDigest = event.operationControl.digest; renderPublication(); } return; }
   if (event.type === "task.completed") { state.finishedAt = Date.now(); if (applyTaskEvent(event.taskId, "task.completed")) state.turnActive = false; updateSendAvailability(); return; }
   if (["task.failed", "task.timeout", "task.cancelled", "task.interrupted"].includes(event.type)) { handleTerminal(event); return; }
   if (event.type === "artifact.created" && event.taskId === state.activeTaskId) { state.artifacts = [...state.artifacts.filter((artifact) => artifact.artifactId !== event.artifactId), { ...event, preview: "" }]; renderArtifacts(); pushProcessNote(`已生成 ${event.name || event.path || "文件"}`); return; }
@@ -428,7 +469,26 @@ optional("#cancel")?.addEventListener("click", async () => { if (!state.activeTa
 function autosizePrompt() { const input = optional("#prompt"); if (!input) return; input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 140)}px`; }
 function syncKeyboardInset() { const vv = window.visualViewport; if (!vv) return; const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)); document.documentElement.style.setProperty("--keyboard-inset", `${inset}px`); document.body.classList.toggle("keyboard-open", inset > 80); }
 const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches;
-$("#promptForm").addEventListener("submit", (event) => { event.preventDefault(); const input = $("#prompt"); const text = input.value; if (!text.trim() || $("#send").disabled) return; input.value = ""; autosizePrompt(); sendPrompt(text).catch((error) => { state.taskState = "FAILED"; state.turnActive = false; setStatus("FAILED", `任务提交失败：${error.message}`); pushNotice(`无法提交任务：${error.message}`); }); });
+$("#promptForm").addEventListener("submit", (event) => { event.preventDefault(); const input = $("#prompt"); const text = input.value; if (!text.trim() || $("#send").disabled) return; input.value = ""; autosizePrompt(); sendPrompt(text, false, state.pendingContentAction).catch((error) => { state.taskState = "FAILED"; state.turnActive = false; setStatus("FAILED", `任务提交失败：${error.message}`); pushNotice(`无法提交任务：${error.message}`); }); });
+$('#resultContent').addEventListener('click', event => {
+  const draftAction = event.target.closest('[data-draft-action]')?.dataset.draftAction;
+  if (draftAction && !state.turnActive && !submitting) {
+    if (draftAction === 'edit') { $('#prompt').value = state.assistantText; autosizePrompt(); $('#prompt').focus(); }
+    else sendPrompt(`发布微博[${$('#publicationVisibility').value},${$('#publicationStatement').value}]：${state.assistantText}`, true).catch(() => pushNotice('预览暂时不可用，请稍后再试。'));
+    return;
+  }
+  const button = event.target.closest('[data-content-action]');
+  const card = state.contentCard;
+  if (!button || !card || state.turnActive || submitting) return;
+  const action = button.dataset.contentAction;
+  if (action === 'edit') {
+    invalidatePublicationApproval();
+    state.pendingContentAction = { ref: card.ref, action: 'edit' };
+    $('#prompt').value = card.text; autosizePrompt(); $('#prompt').focus(); return;
+  }
+  button.disabled = true;
+  sendPrompt(button.textContent, false, { ref: card.ref, action }).catch(() => pushNotice('操作未完成，请检查后再试。'));
+});
 $('#previewPublication').addEventListener('click', () => {
   if (state !== conversations.publish || state.turnActive || submitting || !state.connected) return;
   const text = $('#prompt').value;
@@ -452,6 +512,7 @@ $('#newSession').addEventListener('click', async () => {
   if (state.turnActive || submitting) return;
   submitting = true; updateSendAvailability();
   try {
+    state.contentCard = null; state.pendingContentAction = null;
     state.session = await api('/api/sessions', { method:'POST', body:JSON.stringify({title:'mashang-hub'}) });
     localStorage.setItem(sessionStorageKey(), state.session.id);
     Object.assign(state, {messages:[],artifacts:[],artifactScanText:'',activeTaskId:null,taskState:'IDLE',turnId:null,openCodeSessionId:null,turnActive:false,pendingPermission:null,confirmationId:null,operationControl:null,earlyEvents:[],marketArtifact:null,taskTitle:null,draft:'',assistantText:'',resultPlainText:false,startedAt:null,finishedAt:null});

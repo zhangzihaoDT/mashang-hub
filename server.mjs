@@ -1,3 +1,4 @@
+import { contentCard } from './server/content-preview.mjs';
 import { htmlPreviewPolicy } from './server/artifact-preview.mjs';
 import { approvalProof } from './server/operation-proof.mjs';
 import { executionPolicy, executionTimes } from "./server/task-policy.mjs";
@@ -100,7 +101,16 @@ function finalizeTask(task, { event, status, reason, error }) {
   return true;
 }
 
-function publicControl(control) { return { controlId: control.controlId, op: control.op, targetId: control.targetId, status: control.status, reason: control.reason, code: control.code, conversationId: control.conversationId, workspaceId: control.workspaceId, snapshotRef: control.snapshotRef, digest: control.digest, operationId: control.operationId, resultUrl: control.resultUrl, createdAt: control.createdAt, updatedAt: control.updatedAt }; }
+function publicControl(control) { return { controlId: control.controlId, op: control.op, targetId: control.targetId, status: control.status, reason: control.reason, code: control.code, conversationId: control.conversationId, workspaceId: control.workspaceId, snapshotRef: control.snapshotRef, digest: control.digest, operationId: control.operationId, resultUrl: control.resultUrl, actionLabel: control.actionLabel, originTaskId: control.originTaskId, createdAt: control.createdAt, updatedAt: control.updatedAt }; }
+function dispatchApprovedControl(control) {
+  const dispatch = taskStore.dispatch(control.controlId, { legacyStatus: 'RUNNING', startedAt: Date.now(), workerId: activeWorker?.workerId || control.workerId });
+  Object.assign(control, dispatch, { status: 'RUNNING', updatedAt: Date.now() });
+  const sent = sendWorker({ type: 'runtime.control.request', controlId: control.controlId, attemptId: control.attemptId, dispatchId: control.dispatchId, op: control.op, targetId: control.targetId,
+    ...(control.snapshotRef ? { operationId: control.operationId, snapshotRef: control.snapshotRef, digest: control.digest, proof: control.proof } : {}) });
+  broadcastControl(control);
+  if (!sent) finalizeControl(control, control.snapshotRef ? 'UNKNOWN' : 'FAILED', 'WORKER_OFFLINE');
+  else scheduleControlWatchdog(control);
+}
 function broadcastControl(control) { broadcast({ type: "runtime.control.updated", ...publicControl(control) }); }
 function clearControlTimers(control) { clearTimeout(control.timers.soft); clearTimeout(control.timers.hard); clearTimeout(control.timers.cancel); control.timers.soft = control.timers.hard = control.timers.cancel = null; }
 function finalizeControl(control, status, reason, code = null) {
@@ -335,14 +345,25 @@ function onWorkerMessage(message) {
       task.hasText = Boolean(message.text?.trim());
       appendEvent(task.taskId, { event: "agent.message.completed" });
     }
+    if (task && !isTerminal(task.status)) {
+      const card = contentCard(message.contentCard);
+      delete message.contentCard;
+      if (card) { message.contentCard = card; task.resultPreview = { snapshotRef: card.ref, digest: card.digest }; persistTask(task); }
+    }
     if (task && message.operationPreview && !isTerminal(task.status)) {
       const preview = message.operationPreview;
       const operation = runtimeSnapshot?.operations?.find(item => item.id === preview.targetId && item.requiresSnapshot && item.enabled);
       if (operation && /^[a-f0-9-]{36}$/.test(preview.snapshotRef) && /^[a-f0-9]{64}$/.test(preview.digest) && accessToken) {
         for (const old of controls.values()) if (old.conversationId === task.sessionId && old.targetId === preview.targetId && old.status === 'PENDING_APPROVAL') finalizeControl(old, 'CANCELLED', 'SNAPSHOT_REPLACED');
         const existing = [...controls.values()].find(item => item.snapshotRef === preview.snapshotRef && item.workerId === task.workerId);
-        const control = existing || { controlId: `control_${randomUUID()}`, operationId: `operation_${randomUUID()}`, source: 'runtime', executor: 'operation', op: 'run', targetId: preview.targetId, snapshotRef: preview.snapshotRef, digest: preview.digest, conversationId: task.sessionId, workspaceId: task.workspaceId, workerId: task.workerId, status: 'DRAFT', externalEffectPossible: true, cancellationSupported: false, timeoutMs: operation.timeoutMs, policy: { requiresApproval: true, retry: 'never', executionDeadlineMs: operation.timeoutMs }, timers: {}, createdAt: Date.now(), updatedAt: Date.now() };
+        const control = existing || { controlId: `control_${randomUUID()}`, operationId: `operation_${randomUUID()}`, source: 'runtime', executor: 'operation', op: 'run', targetId: preview.targetId, originTaskId: task.taskId, actionLabel: typeof preview.actionLabel === 'string' ? preview.actionLabel.slice(0, 60) : '发布微博', snapshotRef: preview.snapshotRef, digest: preview.digest, conversationId: task.sessionId, workspaceId: task.workspaceId, workerId: task.workerId, status: 'DRAFT', externalEffectPossible: true, cancellationSupported: false, timeoutMs: operation.timeoutMs, policy: { requiresApproval: true, retry: 'never', executionDeadlineMs: operation.timeoutMs }, timers: {}, createdAt: Date.now(), updatedAt: Date.now() };
         if (!existing) { controls.set(control.controlId, control); persistControl(control); control.status = 'PENDING_APPROVAL'; persistControl(control); }
+        const grant = task.scopedAuthorization;
+        if (!existing && control.status === 'PENDING_APPROVAL' && approvalPrivateKey && grant?.targetId === preview.targetId && grant?.sourceDigest === preview.sourceDigest && activeWorker?.workerId === task.workerId) {
+          const proof = approvalProof(control, approvalPrivateKey);
+          Object.assign(control, taskStore.approveSnapshot(control.controlId, control.digest, proof));
+          dispatchApprovedControl(control);
+        }
         message.operationControl = publicControl(control);
         broadcastControl(control);
       }
@@ -525,15 +546,7 @@ const server = createServer(async (req, res) => {
     }
     if (!approved) { taskStore.reject(control.controlId, "CANCELLED", "USER_REJECTED"); finalizeControl(control, "REJECTED", "USER_REJECTED"); return json(res, 200, publicControl(control)); }
     if (!activeWorker || activeWorker.readyState !== 1) return json(res, 503, { error: "Worker offline; approval remains pending" });
-    const dispatch = taskStore.dispatch(control.controlId, { legacyStatus: "RUNNING", startedAt: Date.now(), workerId: activeWorker?.workerId || control.workerId });
-    Object.assign(control, dispatch);
-    control.status = "RUNNING";
-    control.updatedAt = Date.now();
-    const dispatched = sendWorker({ type: "runtime.control.request", controlId: control.controlId, attemptId: control.attemptId, dispatchId: control.dispatchId, op: control.op, targetId: control.targetId, ...(control.snapshotRef ? { operationId: control.operationId, snapshotRef: control.snapshotRef, digest: control.digest, proof: control.proof } : {}) });
-    broadcastControl(control);
-    console.log(`control approved: ${control.controlId} op=${control.op} target=${control.targetId}`);
-    if (!dispatched) { finalizeControl(control, "FAILED", "WORKER_OFFLINE"); return json(res, 200, publicControl(control)); }
-    scheduleControlWatchdog(control);
+    dispatchApprovedControl(control);
     return json(res, 200, publicControl(control));
   }
   const controlCancel = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)\/cancel$/);
@@ -560,10 +573,10 @@ const server = createServer(async (req, res) => {
       const timer = setTimeout(() => { pendingArtifacts.delete(requestId); resolve({ error: 'SNAPSHOT_UNAVAILABLE' }); }, 10000);
       pendingArtifacts.set(requestId, { resolve: value => { clearTimeout(timer); resolve(value); } });
     });
-    sendWorker({ type: 'operation.preview.request', requestId, snapshotRef: control.snapshotRef, digest: control.digest });
+    sendWorker({ type: 'operation.preview.request', requestId, targetId: control.targetId, snapshotRef: control.snapshotRef, digest: control.digest });
     const preview = await result;
     if (preview.error || preview.digest !== control.digest || typeof preview.text !== 'string') return json(res, 409, { error: 'Snapshot unavailable' });
-    return json(res, 200, { text: preview.text, digest: control.digest });
+    return json(res, 200, { text: preview.text, digest: control.digest, contentCard: contentCard(preview.contentCard) });
   }
   const verifyControl = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)\/reconcile$/);
   if (verifyControl && req.method === 'POST') {
@@ -572,6 +585,21 @@ const server = createServer(async (req, res) => {
     if (activeWorker?.workerId !== control.workerId) return json(res, 503, { error: 'Worker offline' });
     sendWorker({ type: 'worker.reconcile.request', tasks: [{ taskId: control.controlId, attemptId: control.attemptId, dispatchId: control.dispatchId }] });
     return json(res, 202, publicControl(control));
+  }
+  const taskPreview = url.pathname.match(/^\/api\/tasks\/([^/]+)\/preview$/);
+  if (taskPreview && req.method === 'GET') {
+    const task = taskStore.get(taskPreview[1]);
+    if (!task?.resultPreview || activeWorker?.workerId !== task.workerId) return json(res, 409, { error: 'Content unavailable' });
+    const requestId = randomUUID();
+    const response = new Promise(resolve => {
+      const timer = setTimeout(() => { pendingArtifacts.delete(requestId); resolve(null); }, 10000);
+      pendingArtifacts.set(requestId, { resolve: value => { clearTimeout(timer); resolve(value); } });
+    });
+    sendWorker({ type: 'operation.preview.request', requestId, cardPreview: true, ...task.resultPreview });
+    const preview = await response;
+    const card = contentCard(preview?.contentCard);
+    if (!card || card.digest !== task.resultPreview.digest) return json(res, 409, { error: 'Content unavailable' });
+    return json(res, 200, { text: preview.text, contentCard: card });
   }
   const controlGet = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)$/);
   if (controlGet && req.method === "GET") { const control = controls.get(controlGet[1]); return control ? json(res, 200, publicControl(control)) : json(res, 404, { error: "Control not found" }); }
@@ -603,6 +631,8 @@ const server = createServer(async (req, res) => {
     session.turnCount = (session.turnCount || 0) + 1;
     const turnId = `turn_${String(session.turnCount).padStart(3, "0")}`;
     const task = { taskId: `task_${randomUUID()}`, sessionId: session.id, conversationId: session.id, turnId, model: modelString(input.model), workspaceId, status: "SUBMITTING", hasText: false, artifactCount: 0, lastProgress: null, pendingCompletion: false, attemptCompletion: null, timers: {}, createdAt: Date.now() };
+    const grant = input.scopedAuthorization;
+    if (accessToken && authenticated(req) && grant && /^[a-z][a-z0-9-]{0,60}$/.test(grant.targetId) && /^[a-f0-9]{64}$/.test(grant.sourceDigest)) task.scopedAuthorization = { targetId: grant.targetId, sourceDigest: grant.sourceDigest };
     Object.assign(task, { source: 'conversation', executor: 'agent', workerId: activeWorker.workerId, attempt: 0, policy: executionPolicy(input.policy || {}) });
     taskStore.save({ ...task, status: 'CREATED', legacyStatus: 'SUBMITTING', updatedAt: Date.now() });
     Object.assign(task, taskStore.dispatch(task.taskId, { legacyStatus: 'SUBMITTING' }));
@@ -612,7 +642,7 @@ const server = createServer(async (req, res) => {
     taskStore.saveSession(session);
     createTurn({ conversationId: session.id, turnId, taskId: task.taskId, model: task.model, workspaceId });
     console.log(`task created: ${task.taskId} conversation=${session.id} turn=${turnId} workspace=${workspaceId || "default"}`);
-    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, attemptId: task.attemptId, dispatchId: task.dispatchId, policy: task.policy, sessionId: session.id, turnId, marketArtifactId: /^runtime_[a-f0-9]{64}$/.test(input.marketArtifactId || "") ? input.marketArtifactId : null, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
+    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, attemptId: task.attemptId, dispatchId: task.dispatchId, policy: task.policy, sessionId: session.id, turnId, contentAction: input.contentAction && /^[a-f0-9-]{36}$/.test(input.contentAction.ref) && /^[a-z][a-z-]{0,30}$/.test(input.contentAction.action) ? { ref: input.contentAction.ref, action: input.contentAction.action } : null, marketArtifactId: /^runtime_[a-f0-9]{64}$/.test(input.marketArtifactId || "") ? input.marketArtifactId : null, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
     if (!dispatched) { console.log(`task dispatch failed: ${task.taskId} session=${session.id}`); finalizeTask(task, { event: "task.failed", status: "FAILED", reason: REASONS.OPENCODE_ERROR, error: "Mac Worker is offline" }); return json(res, 503, { error: "Mac Worker is offline", taskId: task.taskId }); }
     console.log(`task dispatched to worker: ${task.taskId} session=${session.id} worker=${activeWorker.workerId}`);
     return json(res, 202, publicTask(task));

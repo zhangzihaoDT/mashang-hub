@@ -52,7 +52,7 @@ try{
   send({type:'runtime.snapshot',protocolVersion:1,workerId:'ui-worker',sequence:2,generatedAt:new Date().toISOString(),dependencies:[],services:[{id:'fetch',label:'Fetch',status:'ONLINE',openUrl:'https://fetch.example.test/'},{id:'miit',workspace:'miit',label:'mashang-miit',status:'ONLINE',openUrl:'http://127.0.0.1:8790'},{id:'myknbase',label:'Knbase',status:'ONLINE',openUrl:'http://127.0.0.1:4317/'}],jobs:[],operations:[]});
   await page.waitForFunction(()=>document.querySelector('#independentOpen').getAttribute('href')==='http://127.0.0.1:8790/');assert.match(await page.locator('#independentHeading').textContent(),/由 MIIT 自身维护/);
   await page.locator('[data-workspace="knbase"]').click();assert.match(await page.locator('#independentHint').textContent(),/本机地址/);
- await page.locator('[data-workspace="publish"]').click();assert.equal(await page.locator('#workspaceNotice').isVisible(),true);assert.equal(await page.locator('#prompt').inputValue(),'');
+ await page.locator('[data-workspace="publish"]').click();assert.equal(await page.locator('#workspaceNotice').isVisible(),false);assert.equal(await page.locator('#contentModes').isVisible(),true);assert.equal(await page.locator('#prompt').inputValue(),'');
  await page.locator('#prompt').fill('保留 Publish 草稿');await page.locator('[data-workspace="service"]').click();assert.equal(await page.locator('#prompt').inputValue(),'保留 Service 草稿');assert.equal(tasks.length,0,'navigation must never execute a task');
  await page.locator('#prompt').fill('分析测试问题');await page.locator('#send').click();await until(()=>tasks.length===1);
  assert.equal(await page.locator('#messages #resultBody').count(),1,'task reply must be part of conversation flow');
@@ -60,7 +60,7 @@ try{
  await page.locator('#debugToggle').click();assert.equal(await page.locator('#debug').isVisible(),true);await page.locator('#debugClose').click();
  await page.locator('[data-workspace="publish"]').click();await sleep(850);assert.ok(!(await page.locator('#resultContent').textContent()).includes('Mock 分析完成'),'inactive task result must not leak into Publish');
  assert.equal(await page.locator('#prompt').inputValue(),'保留 Publish 草稿');await page.locator('#send').click();await until(()=>tasks.length===2);await sleep(850);
- assert.ok(tasks[1].prompt.includes('只生成或修改文字，不执行发布'));assert.notEqual(tasks[0].sessionId,tasks[1].sessionId);
+ assert.equal(tasks[1].prompt,'保留 Publish 草稿');assert.notEqual(tasks[0].sessionId,tasks[1].sessionId);
  await page.locator('[data-workspace="service"]').click();assert.match(await page.locator('#resultContent').textContent(),/Mock 分析完成/);assert.equal(await page.locator('#resultContent table').count(),1);
  await page.locator('[data-action="preview"]').click();await page.waitForSelector('.artifact-markdown');assert.match(await page.locator('.artifact-markdown').textContent(),/附件预览/);
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

@@ -7,14 +7,14 @@ import { snapshotDigest, verifyProof } from '../../server/operation-proof.mjs';
 import { immutableRecord, PUBLISH_OPERATION } from './operation.mjs';
 
 export class PublicationService {
-  constructor({ directory, publicKey, execute, reconcile }) { Object.assign(this, { directory, publicKey, execute, reconcile }); }
+  constructor({ directory, publicKey, execute, reconcile, targetId = PUBLISH_OPERATION }) { Object.assign(this, { directory, publicKey, execute, reconcile, targetId }); }
   async load(id, suffix) {
     try { return JSON.parse(await readFile(join(this.directory, `${id}.${suffix}.json`), 'utf8')); }
     catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   }
   async handle({ proof, draft }, readOnly = false) {
     const approval = verifyProof(proof, this.publicKey, { readOnly });
-    if (approval.targetId !== PUBLISH_OPERATION || snapshotDigest(draft) !== approval.digest) throw Error('SNAPSHOT_MISMATCH');
+    if (approval.targetId !== this.targetId || snapshotDigest(draft) !== approval.digest) throw Error('SNAPSHOT_MISMATCH');
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const id = approval.operationId;
     const previous = await this.load(id, 'claim');

@@ -71,7 +71,7 @@ try{
       const page=await browser.newPage();const pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));
       await page.goto(base);await page.locator('#accessToken').fill('mock-login');await page.locator('#loginForm button').click();
       await page.locator('#send').waitFor({state:'visible'});await until(async()=>await page.locator('#send').isEnabled());
-      await page.locator('[data-workspace="publish"]').click();
+      await page.locator('[data-workspace="publish"]').click();await page.locator('[data-content-mode="publish"]').click();
       const beforeCalls=calls;
       const original=' raw Mock UI\n<script>window.mockAttack=1</script> & 中文 ';
       await page.locator('#prompt').fill(original);await page.locator('#previewPublication').click();
@@ -81,7 +81,7 @@ try{
       await page.locator('#approvePublication').click();
       await page.locator('#publicationReview a').waitFor();assert.equal(calls,beforeCalls+1);
       await page.reload();await until(async()=>await page.locator('#send').isEnabled());
-      await page.locator('[data-workspace="publish"]').click();await page.locator('#publicationReview a').waitFor();assert.equal(calls,beforeCalls+1);
+      await page.locator('[data-workspace="publish"]').click();await page.locator('[data-content-mode="publish"]').click();await page.locator('#publicationReview a').waitFor();assert.equal(calls,beforeCalls+1);
       await page.locator('#prompt').fill('待修改草稿');await page.locator('#previewPublication').click();await page.locator('#approvePublication').waitFor();
       await page.locator('#prompt').fill('修改后的正文');await until(async()=>await page.locator('#approvePublication').count()===0);assert.equal(calls,beforeCalls+1);
       assert.deepEqual(pageErrors,[]);

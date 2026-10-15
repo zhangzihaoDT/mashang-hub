@@ -64,9 +64,9 @@ export function buildWorkspaces(env = process.env) {
     outputRoots: ["processed"],
   });
 
-  if (env.MASHANG_PUBLISH_ENABLED === "1" || (env.MASHANG_PUBLISH_SERVICE_URL || env.MASHANG_PUBLISH_DIRECT === '1')) byId.set("publish", {
-    id: "publish", label: "mashang-publish", root: env.MASHANG_PUBLISH_ROOT || join(homedir(), "Documents/github/mashang-publish"),
-    outputRoots: [],
+  if (env.MASHANG_CONTENT_ENABLED === '1' || env.MASHANG_PUBLISH_ENABLED === "1" || (env.MASHANG_PUBLISH_SERVICE_URL || env.MASHANG_PUBLISH_DIRECT === '1')) byId.set("publish", {
+    id: "publish", label: "Content", root: env.MASHANG_CONTENT_ROOT || env.MASHANG_PUBLISH_ROOT || join(homedir(), "Documents/github/content"),
+    outputRoots: ["notes/entries"],
   });
 
   for (const entry of loadConfig(env.MASHANG_WORKSPACES_CONFIG)) {

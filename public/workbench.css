@@ -23,3 +23,18 @@
 .compact-service .runtime-state{display:inline-flex;align-items:center;gap:7px;margin:0;padding:5px 10px;border:1px solid transparent;font-weight:600}.compact-service .runtime-state.online{background:#edf7f0;border-color:#c7e5d1;color:#2f754a}.compact-service .runtime-state.offline{background:#fff0e9;border-color:#f0cbb8;color:#a34d24}.compact-service .runtime-state.unknown{background:#f1f4f6;border-color:#dce4e7;color:var(--muted)}.runtime-status-dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0}
 
 .composer-collapse-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#536b7b;font-size:12px;margin-bottom:6px}.composer-collapse-bar .quiet{min-height:32px;padding:4px 8px}.composer.market-composer-collapsed>:not(.composer-collapse-bar){display:none!important}.composer.market-composer-collapsed{padding-top:8px;padding-bottom:8px}.composer.market-composer-collapsed .composer-collapse-bar{margin-bottom:0}@media(pointer:coarse){.composer-collapse-bar .quiet{min-height:44px}}
+
+/* Content keeps the existing conversation layout; no additional workbench. */
+.content-modes{display:flex;gap:4px;margin:0 28px 10px;flex-shrink:0;align-self:flex-start;border-bottom:1px solid var(--line)}
+.content-modes button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:13px;padding:9px 16px;cursor:pointer;border-bottom:2px solid transparent}
+.content-modes button[aria-pressed="true"]{color:var(--blue);border-bottom-color:var(--cyan)}
+.content-modes button:focus-visible,.content-actions button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.content-workspace .workspace-runtime,.content-workspace #debugToggle,.content-workspace #executionInfo,.content-workspace .process,.content-workspace .message-meta{display:none!important}
+.content-workspace .task-result-card{border-color:var(--line);box-shadow:none;min-width:0}
+.content-workspace #publicationReview{background:transparent;border:0;margin:12px 0 0;padding:0}
+.content-workspace #publicationReview button,.content-primary{background:var(--blue);color:#fff;border:0;border-radius:6px;padding:9px 14px;font:inherit;font-size:13px;cursor:pointer}
+.content-card{min-width:0;overflow-wrap:anywhere}.content-card h2{font-size:17px;margin:0 0 16px}.content-note-body{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.85}
+.content-tags{color:var(--blue);font-size:12px;line-height:1.8;overflow-wrap:anywhere}.content-feedback{font-size:13px;color:var(--muted);line-height:1.7}.content-feedback.needs-attention{color:#a65c22}
+.content-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.content-actions button:disabled{opacity:.5;cursor:default}
+.content-workspace #publicationReview a{display:inline-block;margin:8px 12px;color:var(--blue)}
+@media(max-width:640px){.content-modes{margin:0 16px 8px}.content-modes button{padding:8px 14px}.content-workspace .composer-buttons{flex-wrap:wrap}.content-workspace .composer-toolbar{gap:8px;flex-wrap:wrap}.content-workspace .task-result-card{padding:16px}.content-note-body{font-size:14px}.content-workspace .composer select{max-width:110px}}

@@ -219,6 +219,7 @@ export function buildRegistry(env = process.env, config = null) {
         run: { command: join(aksignalRoot, ".venv/bin/python"),
           args: ["-m", "src.daily_schedule", "--manual-run"], cwd: aksignalRoot },
       },
+      ...(env.MASHANG_CONTENT_ENABLED === '1' ? [{ id: 'notes-flomo', workspace: 'publish', label: '同步 Flomo', enabled: true, requiresSnapshot: true, cancellationSupported: false, timeoutMs: 60000 }] : []),
       ...((env.MASHANG_PUBLISH_SERVICE_URL || env.MASHANG_PUBLISH_DIRECT === '1') ? [{ id: 'text-publication', workspace: 'publish', label: '微博文本发布', description: '审阅不可变正文后明确授权；结果不确定时只核验。', enabled: true, requiresSnapshot: true, cancellationSupported: false, timeoutMs: 60000 }] : []),
       {
         id: "daily",
