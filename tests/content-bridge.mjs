@@ -123,19 +123,29 @@ try {
   const typed = '**按钮保存合成笔记**\n\n原样保存，不调用模型。\n\n#测试';
   const beforeGeneration = generation;
   const composeSaved = await submit(composedSession, typed, { action: 'save-input' }, { model: null });
-  assert.equal(composeSaved.card.text, typed);
+  assert.ok(composeSaved.card.text.startsWith('**合成笔记'));
   assert.equal(composeSaved.card.notice, '已保存到本地');
-  assert.equal(generation, beforeGeneration, 'local save must not call model');
+  const savedMarkdown = await Promise.all((await readdir(entries)).filter(f => f.endsWith('.md')).map(f => readFile(join(entries, f), 'utf8')));
+  assert.ok(savedMarkdown.includes(composeSaved.card.text), 'Markdown stores the organized preview exactly');
+  assert.equal(generation, beforeGeneration + 1, 'local input is organized before Markdown save');
   const changed = '**按钮编辑合成笔记**\n\n手动修改后的正文。\n\n#测试';
   const composeEdited = await submit(composedSession, changed, { ref: composeSaved.card.ref, action: 'edit-save' }, { model: null });
-  assert.equal(composeEdited.card.text, changed);
+  assert.ok(composeEdited.card.text.startsWith('**合成笔记'));
   const composeRecords = await Promise.all((await readdir(entries)).filter(f => f.endsWith('.json')).map(f => readFile(join(entries, f), 'utf8').then(JSON.parse)));
-  assert.ok(composeRecords.some(r => r.payload.final_note === changed && r.payload.original_content === typed));
-  const composeSync = await submit(composedSession, changed, { ref: composeEdited.card.ref, action: 'edit-sync' });
-  assert.equal(composeSync.card.text, changed);
+  assert.ok(composeRecords.some(r => r.payload.final_note === composeEdited.card.text && r.payload.original_content === typed));
+  const composeSync = await submit(composedSession, composeEdited.card.text, { ref: composeEdited.card.ref, action: 'edit-sync' });
+  assert.equal(composeSync.card.text, composeEdited.card.text);
   assert.equal(composeSync.card.notice, '已保存到本地');
   assert.equal((await latestControl(composedSession)).status, 'PENDING_APPROVAL');
   assert.equal((await calls()).length, 3);
+  const spacedSession = await session();
+  const spacedInput = '**列表合成笔记**\n\n- 第一项\n\n- 第二项\n\n#测试';
+  const countBeforeSpacing = generation;
+  const spacedPreview = await submit(spacedSession, spacedInput, { action: 'sync-input' });
+  assert.equal(spacedPreview.card.text, spacedInput.replace('- 第一项\n\n- 第二项', '- 第一项\n- 第二项'));
+  assert.equal(generation, countBeforeSpacing, 'list whitespace needs no model retry');
+  assert.equal((await latestControl(spacedSession)).status, 'PENDING_APPROVAL');
+  assert.equal((await calls()).length, 3, 'format preparation cannot send externally');
   console.log('Content real Hub → Worker → Content APIs with mock model/webhook: local save, exact approval, edit invalidation, cross-session denial, duplicate clicks, timeout, restart, scoped direct grant and recovery passed');
   if (process.env.CONTENT_BROWSER === '1') {
     const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -148,7 +158,7 @@ try {
     assert.equal(await page.locator('#workspaceTitle').textContent(), 'Content');
     assert.equal(await page.locator('[data-content-mode="notes"]').getAttribute('aria-pressed'), 'true');
     assert.equal(await page.locator('#send').isVisible(), false);
-    for (const id of ['editNote','saveNote','syncNote']) assert.equal(await page.locator('#'+id).isVisible(), true);
+    for (const id of ['saveNote','syncNote']) assert.equal(await page.locator('#'+id).isVisible(), true);
     assert.equal(await page.locator('#saveNote').isEnabled(), false);
     await page.locator('#prompt').fill('保留输入');
     await page.locator('[data-content-mode="publish"]').click(); assert.equal(await page.locator('#send').isVisible(), true);
@@ -159,14 +169,16 @@ try {
     const generationBeforeSave = generation;
     await page.locator('#prompt').fill(noteText); await page.locator('#saveNote').click();
     await page.getByText('已保存到本地', { exact: true }).last().waitFor();
-    assert.equal(generation, generationBeforeSave);
+    assert.equal(generation, generationBeforeSave + 1);
     assert.equal(await page.evaluate(() => window.attack), undefined);
     const before = (await calls()).length;
-    await until(() => page.locator('#editNote').isEnabled());
-    await page.locator('#editNote').click(); assert.equal(await page.locator('#prompt').inputValue(), noteText);
+    assert.equal(await page.locator('#editNote').count(), 0);
+    assert.equal(await page.locator('#saveNote').textContent(), '保存本地');
+    assert.equal(await page.locator('.composer-buttons #noteComposerActions').count(), 1);
+    assert.notEqual(await page.locator('#saveNote').evaluate(el => getComputedStyle(el).backgroundColor), await page.locator('#syncNote').evaluate(el => getComputedStyle(el).backgroundColor));
     const edited = '**产品组合规划**\n\n手动编辑后的合成内容，分别保存本地与同步 Flomo。\n\n#测试';
     await page.locator('#prompt').fill(edited); await page.locator('#saveNote').click();
-    await until(async () => await page.locator('.content-note-body').last().textContent() === '手动编辑后的合成内容，分别保存本地与同步 Flomo。');
+    await until(() => page.locator('#syncNote').isEnabled());
     await until(() => page.locator('#syncNote').isEnabled());
     await page.locator('#syncNote').click(); await page.locator('#approvePublication').waitFor();
     assert.equal(await page.locator('#approvePublication').textContent(), '确认同步 Flomo'); assert.equal((await calls()).length, before);
@@ -182,18 +194,18 @@ try {
     await mkdir('.local/content-preview', { recursive: true }); await page.screenshot({ path: '.local/content-preview/desktop.png', fullPage: true });
     for (const width of [390, 320]) {
       await page.setViewportSize({ width, height: 844 }); await page.waitForTimeout(150);
-      for (const id of ['contentModes','editNote','saveNote','syncNote']) assert.equal(await page.locator('#'+id).isVisible(), true);
+      for (const id of ['contentModes','saveNote','syncNote']) assert.equal(await page.locator('#'+id).isVisible(), true);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'no mobile overflow');
     }
     await page.screenshot({ path: '.local/content-preview/mobile.png', fullPage: true });
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.locator('#editNote').click();
     await page.locator('#prompt').fill('**Enter 保存笔记**\n\n回车只保存本地。\n\n#测试');
     await page.locator('#prompt').press('Enter');
-    await until(async () => await page.locator('.content-card h2').last().textContent() === 'Enter 保存笔记');
+    await until(async () => generation >= generationBeforeSave + 3);
+    await page.getByText('已保存到本地', { exact: true }).last().waitFor();
     assert.equal((await calls()).length, before + 1);
     assert.deepEqual(errors, []);
-    console.log('Content desktop + 390/320 mobile: three Notes actions, no Send, exact local edit/save, confirmed sync, Enter local save, reload and no overflow passed');
+    console.log('Content desktop + 390/320 mobile: two Notes actions, no Send or Edit, organized local Markdown save, confirmed sync, Enter local save, reload and no overflow passed');
   }
 } finally {
   if (browser) await browser.close();

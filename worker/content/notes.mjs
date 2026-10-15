@@ -1,3 +1,4 @@
+import { normalizeFlomoListSpacing } from './note-response.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -29,7 +30,7 @@ export async function createNotesOperation({ root, dataDirectory = join(root, 'd
     const lines = draft.final_note.split('\n');
     const tags = lines.at(-1)?.match(/#[^\s#]+/g) || [];
     return { title: lines[0].replace(/^\*\*|\*\*$/g, ''), body: lines.slice(1, tags.length ? -1 : undefined).join('\n').trim(), tags, text: draft.final_note, ref, digest,
-      notice: draft.localSaved ? '已保存到本地' : '', actions: [{ id: 'edit', label: '修改' }, ...(!draft.localSaved ? [{ id: 'save', label: '保存' }] : []), ...(!draft.flomoTaskId ? [{ id: 'sync', label: '同步 Flomo' }] : [])] };
+      notice: draft.localSaved ? '已保存到本地' : '', actions: [...(!draft.localSaved ? [{ id: 'save', label: '保存本地' }] : []), ...(!draft.flomoTaskId ? [{ id: 'sync', label: '同步 Flomo' }] : [])] };
   }
   const evidence = async id => {
     const mapping = await state.read(`associations/${id}.json`);
@@ -90,11 +91,21 @@ export async function createNotesOperation({ root, dataDirectory = join(root, 'd
       if (signal?.aborted) return { text: '已取消。' };
       const wantsSave = ['save','save-input','edit-save'].includes(action?.action) || intent?.save;
       const wantsSync = ['sync','sync-input','edit-sync'].includes(action?.action) || intent?.sync;
-      if (wantsSync) {
-        try { validateNote({ ...draft, target: 'flomo' }); await notes(storage, { ...draft, target: 'flomo' }, { dryRun: true }); }
-        catch { draft.final_note = await generate({ original: draft.final_note, prompt: '保留原意，整理为 Flomo 笔记', flomo: true, signal }); validateNote({ ...draft, target: 'flomo' }); }
+      if (wantsSave && ['save-input', 'edit-save'].includes(action?.action)) {
+        draft.final_note = normalizeFlomoListSpacing(await generate({ original: draft.final_note, prompt: '保留原意，整理为本地 Markdown 笔记', flomo: false, signal }));
+        draft.localSaved = false; delete draft.localTaskId;
       }
+      if (wantsSync) {
+        const beforeFormatting = draft.final_note;
+        draft.final_note = normalizeFlomoListSpacing(draft.final_note);
+        try { validateNote({ ...draft, target: 'flomo' }); }
+        catch { draft.final_note = normalizeFlomoListSpacing(await generate({ original: draft.final_note, prompt: '保留原意，整理为 Flomo 笔记', flomo: true, signal })); validateNote({ ...draft, target: 'flomo' }); }
+        if (draft.final_note !== beforeFormatting) { draft.localSaved = false; delete draft.localTaskId; }
+        await notes(storage, { ...draft, target: 'flomo' }, { dryRun: true });
+      }
+      if (signal?.aborted) return { text: '已取消。' };
       if (wantsSave && !draft.localSaved) {
+        if (!draft.raw) draft.final_note = normalizeFlomoListSpacing(draft.final_note);
         // Cancellation cannot erase a completed local save; no network is involved.
         const saved = await notes(storage, { ...draft, target: 'local' });
         draft.localSaved = true; draft.localTaskId = saved.task_id;

@@ -196,8 +196,7 @@ function updateNoteActions() {
   const busy = state.turnActive || submitting;
   const changed = typed && (!card || $('#prompt').value !== card.text);
   const syncBlocked = !changed && Boolean(card && state.operationControl && ['PENDING_APPROVAL','APPROVED','RUNNING','COMPLETED','UNKNOWN'].includes(state.operationControl.status));
-  $('#editNote').disabled = busy || !hasContent;
-  $('#saveNote').disabled = busy || !state.connected || !hasContent || (!typed && Boolean(card?.notice));
+  $('#saveNote').disabled = busy || !state.connected || (typed && !state.selectedModel?.available) || !hasContent || (!typed && Boolean(card?.notice));
   $('#syncNote').disabled = busy || !state.connected || !state.selectedModel?.available || !hasContent || syncBlocked;
 }
 function updateSendAvailability() {
@@ -499,7 +498,6 @@ $('#noteComposerActions').addEventListener('click', event => {
   const button = event.target.closest('[data-note-compose]');
   if (!button || button.disabled || state.turnActive || submitting) return;
   const action = button.dataset.noteCompose;
-  if (action === 'edit') { editCurrentNote(); return; }
   const input = $('#prompt');
   const typed = Boolean(input.value.trim());
   const text = typed ? input.value : state.contentCard?.text || state.assistantText;

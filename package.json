@@ -49,7 +49,7 @@
     "test:operation-provider": "node tests/json-operation.mjs",
     "test:aksignal-bridge": "node tests/aksignal-hub-bridge.mjs",
     "test:snapshot-visuals": "node tests/market-snapshot-visuals.mjs && node tests/trend-comparison.mjs",
-    "test:content": "node tests/content-bridge.mjs",
+    "test:content": "node tests/content-session.mjs && node tests/content-bridge.mjs",
     "test:content-browser": "CONTENT_BROWSER=1 node tests/content-bridge.mjs"
   },
   "engines": {

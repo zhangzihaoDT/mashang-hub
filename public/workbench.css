@@ -39,6 +39,11 @@
 .content-workspace #publicationReview a{display:inline-block;margin:8px 12px;color:var(--blue)}
 @media(max-width:640px){.content-modes{margin:0 16px 8px}.content-modes button{padding:8px 14px}.content-workspace .composer-buttons{flex-wrap:wrap}.content-workspace .composer-toolbar{gap:8px;flex-wrap:wrap}.content-workspace .task-result-card{padding:16px}.content-note-body{font-size:14px}.content-workspace .composer select{max-width:110px}}
 
-.note-composer-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid #eef1f3;background:#fff}
+.note-composer-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin-left:auto}
 .note-composer-actions button{font:inherit;font-size:12px;padding:7px 11px;border-radius:5px;cursor:pointer;min-height:32px}
 .note-composer-actions button:disabled{opacity:.45;cursor:default}.note-composer-actions button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+
+.note-composer-actions .note-save-secondary{background:#fff;color:var(--blue);border:1px solid #bdcdd7}
+.note-composer-actions .note-save-secondary:hover:not(:disabled){background:#f1f7fb;border-color:var(--blue)}
+.note-composer-actions .content-primary:hover:not(:disabled){filter:brightness(.92)}
+.content-workspace .composer-buttons{margin-left:auto;justify-content:flex-end}
