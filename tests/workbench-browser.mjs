@@ -59,7 +59,7 @@ try{
  assert.equal(await page.locator('#cancel').isVisible(),true);
  await page.locator('#debugToggle').click();assert.equal(await page.locator('#debug').isVisible(),true);await page.locator('#debugClose').click();
  await page.locator('[data-workspace="publish"]').click();await sleep(850);assert.ok(!(await page.locator('#resultContent').textContent()).includes('Mock 分析完成'),'inactive task result must not leak into Publish');
- assert.equal(await page.locator('#prompt').inputValue(),'保留 Publish 草稿');await page.locator('#send').click();await until(()=>tasks.length===2);await sleep(850);
+ assert.equal(await page.locator('#prompt').inputValue(),'保留 Publish 草稿');await page.locator('[data-content-mode="publish"]').click();await page.locator('#send').click();await until(()=>tasks.length===2);await sleep(850);
  assert.equal(tasks[1].prompt,'保留 Publish 草稿');assert.notEqual(tasks[0].sessionId,tasks[1].sessionId);
  await page.locator('[data-workspace="service"]').click();assert.match(await page.locator('#resultContent').textContent(),/Mock 分析完成/);assert.equal(await page.locator('#resultContent table').count(),1);
  await page.locator('[data-action="preview"]').click();await page.waitForSelector('.artifact-markdown');assert.match(await page.locator('.artifact-markdown').textContent(),/附件预览/);

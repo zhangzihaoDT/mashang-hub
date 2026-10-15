@@ -38,3 +38,7 @@
 .content-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.content-actions button:disabled{opacity:.5;cursor:default}
 .content-workspace #publicationReview a{display:inline-block;margin:8px 12px;color:var(--blue)}
 @media(max-width:640px){.content-modes{margin:0 16px 8px}.content-modes button{padding:8px 14px}.content-workspace .composer-buttons{flex-wrap:wrap}.content-workspace .composer-toolbar{gap:8px;flex-wrap:wrap}.content-workspace .task-result-card{padding:16px}.content-note-body{font-size:14px}.content-workspace .composer select{max-width:110px}}
+
+.note-composer-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid #eef1f3;background:#fff}
+.note-composer-actions button{font:inherit;font-size:12px;padding:7px 11px;border-radius:5px;cursor:pointer;min-height:32px}
+.note-composer-actions button:disabled{opacity:.45;cursor:default}.note-composer-actions button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}

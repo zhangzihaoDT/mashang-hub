@@ -17,6 +17,9 @@ const env = {
   OPENCODE_URL: "http://127.0.0.1:4096",
   OPENCODE_BIN: "/opt/homebrew/bin/opencode",
   PATH: "/opt/homebrew/bin:/usr/bin:/bin",
+  MASHANG_CONTENT_ENABLED: "1",
+  MASHANG_CONTENT_ROOT: "/mock/content",
+  MASHANG_CONTENT_PUBLIC_KEY_FILE: "/mock/content-public.pem",
   MASHANG_PUBLISH_ENABLED: "1",
   MASHANG_PUBLISH_ROOT: "/mock/publish",
   MASHANG_PUBLISH_GATE_DIR: "/mock/gate",
@@ -38,6 +41,10 @@ assert.equal(worker.plist.EnvironmentVariables.HUB_URL, "https://mashang-hub.exa
 assert.equal(worker.plist.EnvironmentVariables.WORKER_SECRET, "secret<&");
 assert.equal(worker.plist.EnvironmentVariables.MASHANG_SERVICE_ROOT, `${home}/Documents/github/mashang-service`);
 assert.equal(worker.plist.EnvironmentVariables.OPENCODE_URL, "http://127.0.0.1:4096");
+assert.equal(worker.plist.EnvironmentVariables.MASHANG_CONTENT_ENABLED, "1");
+assert.equal(worker.plist.EnvironmentVariables.MASHANG_CONTENT_ROOT, "/mock/content");
+assert.equal(worker.plist.EnvironmentVariables.MASHANG_CONTENT_PUBLIC_KEY_FILE, "/mock/content-public.pem");
+assert.equal(opencode.plist.EnvironmentVariables.MASHANG_CONTENT_ENABLED, undefined);
 assert.equal(worker.plist.EnvironmentVariables.MASHANG_PUBLISH_ENABLED, "1");
 assert.equal(worker.plist.EnvironmentVariables.MASHANG_PUBLISH_ROOT, "/mock/publish");
 assert.equal(worker.plist.EnvironmentVariables.MASHANG_PUBLISH_GATE_DIR, "/mock/gate");

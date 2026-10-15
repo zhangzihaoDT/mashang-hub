@@ -31,15 +31,18 @@ function updateContentMode(mode = state.contentMode || 'notes') {
   const publishing = active && mode === 'publish';
   for (const id of ['previewPublication','publicationVisibility','publicationStatement']) $('#'+id).classList.toggle('hidden', !publishing);
   $('#workspaceNotice').classList.add('hidden');
+  $('#send').classList.toggle('hidden', active && mode === 'notes');
+  document.querySelector('.composer .hint').textContent = active && mode === 'notes' ? 'Enter 保存 · Shift + Enter 换行' : 'Enter 发送 · Shift + Enter 换行';
   if (active) $('#debug').classList.add('hidden');
   if (active) $('#prompt').placeholder = contentCopy[mode].placeholder;
   const span = $('#connection span');
   if (active) span.textContent = state.connected ? '已连接' : '连接中…';
+  updateNoteActions();
 }
 $('#contentModes').addEventListener('click', event => {
   const mode = event.target.closest('[data-content-mode]')?.dataset.contentMode;
   if (!mode) return;
-  updateContentMode(mode); renderMessages();
+  updateContentMode(mode); renderMessages(); renderResult(state.assistantText, state.resultPlainText);
 });
 function refreshExecutionInfo() {
   $('#resultBody').classList.toggle('hidden', !state.turnActive && !state.activeTaskId && !state.assistantText && !state.artifacts.length && !state.operationControl);
@@ -184,9 +187,23 @@ function renderMarketBinding() {
 }
 $('#marketBinding').addEventListener('click',event=>{const q=event.target.closest('[data-market-question]');if(q){$('#prompt').value=q.dataset.marketQuestion;autosizePrompt();$('#prompt').focus();}});
 function sessionName(session) { return session?.title || session?.name || session?.id?.slice(0, 16) || "未创建"; }
+function updateNoteActions() {
+  const active = currentWorkspace === 'publish' && (state.contentMode || 'notes') === 'notes';
+  $('#noteComposerActions').classList.toggle('hidden', !active);
+  const typed = $('#prompt').value.trim().length > 0;
+  const card = state.contentCard;
+  const hasContent = typed || Boolean(card?.text || state.assistantText);
+  const busy = state.turnActive || submitting;
+  const changed = typed && (!card || $('#prompt').value !== card.text);
+  const syncBlocked = !changed && Boolean(card && state.operationControl && ['PENDING_APPROVAL','APPROVED','RUNNING','COMPLETED','UNKNOWN'].includes(state.operationControl.status));
+  $('#editNote').disabled = busy || !hasContent;
+  $('#saveNote').disabled = busy || !state.connected || !hasContent || (!typed && Boolean(card?.notice));
+  $('#syncNote').disabled = busy || !state.connected || !state.selectedModel?.available || !hasContent || syncBlocked;
+}
 function updateSendAvailability() {
   $('#send').disabled = (state === conversations.aksignal && !latestMarketArtifact() && !state.marketArtifact) || state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
   $('#previewPublication').disabled = state.turnActive || submitting || !state.connected || !runtimeSnapshot?.operations?.some(item=>item.workspace === 'publish' && item.requiresSnapshot && item.enabled);
+  updateNoteActions();
 }
 function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = currentWorkspace === 'publish' ? (connected ? '已连接' : '连接中…') : `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); }
 function taskLabel(status) { return state === conversations.publish ? ({RUNNING:'正在整理',COMPLETED:'已完成',INTERRUPTED:'处理已中断',WAITING_PERMISSION:'等待确认'})[status] || TASK_LABELS[status] || status : TASK_LABELS[status] || status; }
@@ -248,7 +265,7 @@ function recordProcess(status, label) {
 function pushProcessNote(label) { const message = ensureProcessMessage(); message.steps.push({ label, status: "note" }); renderMessages(); }
 function updateRunningLabel(label) { const message = currentProcessMessage(); const step = message?.steps[message.steps.length - 1]; if (!step || step.status !== "running" || step.label === label) return; step.label = label; renderMessages(); }
 function pushNotice(text, level = "error") { state.messages.push({ role: "assistant", kind: "notice", text, level }); renderMessages(); }
-function renderResult(text, plainText = false) { const content = typeof state !== 'undefined' && typeof conversations !== 'undefined' && state === conversations.publish; const card = content && state.contentCard; const publicationDraft = content && !card && text && !state.operationControl && /微博/.test(state.taskTitle || ''); $("#resultContent").innerHTML = card ? contentCardHTML(card) : text ? (plainText ? `<pre style="white-space:pre-wrap">${escapeHTML(text)}</pre>` : markdown(text)) : ''; if (publicationDraft) $("#resultContent").innerHTML += '<div class="content-actions"><button type="button" class="quiet" data-draft-action="edit">修改</button><button type="button" class="content-primary" data-draft-action="publish">预览并发布</button></div>'; }
+function renderResult(text, plainText = false) { const content = typeof state !== 'undefined' && typeof conversations !== 'undefined' && state === conversations.publish; const card = content && state.contentCard; const publicationDraft = content && !card && text && !state.operationControl && /微博/.test(state.taskTitle || ''); $("#resultContent").innerHTML = card ? contentCardHTML(card, (state.contentMode || 'notes') === 'notes') : text ? (plainText ? `<pre style="white-space:pre-wrap">${escapeHTML(text)}</pre>` : markdown(text)) : ''; if (publicationDraft) $("#resultContent").innerHTML += '<div class="content-actions"><button type="button" class="quiet" data-draft-action="edit">修改</button><button type="button" class="content-primary" data-draft-action="publish">预览并发布</button></div>'; }
 function artifactCandidates(text = "") { const pattern = /(?:^|[\s"'`(])((?:[\p{L}\p{N}_.-]+\/)+[\p{L}\p{N}_.-]+\.(?:md|html|csv|png))(?=$|[\s"'`),.;])/gu; return [...text.matchAll(pattern)].map((match) => match[1]); }
 function formatBytes(bytes) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
 function artifactURL(endpoint, artifactId) { return `${endpoint}?artifactId=${encodeURIComponent(artifactId)}`; }
@@ -393,7 +410,7 @@ async function sendPrompt(text, publicationPreview = false, contentAction = null
   try {
     if (!state.session) await ensureSession();
     if(state === conversations.aksignal) {bindMarket();renderMarketBinding();}
-    if (!publicationPreview && !state.selectedModel?.available) throw new Error("请选择可用模型");
+    if (!publicationPreview && !['save','save-input','edit-save','edit'].includes(contentAction?.action) && !state.selectedModel?.available) throw new Error("请选择可用模型");
     state.operationControl = null; renderPublication();
     const scopedAuthorization = state === conversations.publish ? await directContentAuthorization(text) : null;
     const response = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/message`, { method: "POST", body: JSON.stringify({ model: state.selectedModel ? { providerID: state.selectedModel.providerID, modelID: state.selectedModel.modelID } : null, workspaceId: state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : null, contentAction, scopedAuthorization, marketArtifactId: state === conversations.aksignal ? state.marketArtifact?.artifactId : undefined, parts: [{ type: "text", text }], confirmationId: state.confirmationId }) });
@@ -430,7 +447,7 @@ function handleServerEvent(event) {
   if (event.type === 'runtime.control.updated' && event.snapshotRef) {
     const context = Object.values(conversations).find(item => item?.session?.id === event.conversationId);
     if (context && (!event.originTaskId || !context.activeTaskId || context.activeTaskId === event.originTaskId) && (!context.operationControl || context.operationControl.controlId === event.controlId || event.status === 'PENDING_APPROVAL')) context.operationControl = event;
-    renderPublication(); refreshExecutionInfo();
+    renderPublication(); refreshExecutionInfo(); updateNoteActions();
   }
   if (event.type === "permission.requested" && !event.taskId && event.request?.sessionID) {
     const target = Object.values(conversations).find(context=>context?.openCodeSessionId === event.request.sessionID);
@@ -469,7 +486,31 @@ optional("#cancel")?.addEventListener("click", async () => { if (!state.activeTa
 function autosizePrompt() { const input = optional("#prompt"); if (!input) return; input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 140)}px`; }
 function syncKeyboardInset() { const vv = window.visualViewport; if (!vv) return; const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)); document.documentElement.style.setProperty("--keyboard-inset", `${inset}px`); document.body.classList.toggle("keyboard-open", inset > 80); }
 const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches;
-$("#promptForm").addEventListener("submit", (event) => { event.preventDefault(); const input = $("#prompt"); const text = input.value; if (!text.trim() || $("#send").disabled) return; input.value = ""; autosizePrompt(); sendPrompt(text, false, state.pendingContentAction).catch((error) => { state.taskState = "FAILED"; state.turnActive = false; setStatus("FAILED", `任务提交失败：${error.message}`); pushNotice(`无法提交任务：${error.message}`); }); });
+$("#promptForm").addEventListener("submit", (event) => { event.preventDefault(); if (currentWorkspace === 'publish' && (state.contentMode || 'notes') === 'notes') { $('#saveNote').click(); return; } const input = $("#prompt"); const text = input.value; if (!text.trim() || $("#send").disabled) return; input.value = ""; autosizePrompt(); sendPrompt(text, false, state.pendingContentAction).catch((error) => { state.taskState = "FAILED"; state.turnActive = false; setStatus("FAILED", `任务提交失败：${error.message}`); pushNotice(`无法提交任务：${error.message}`); }); });
+function editCurrentNote(force = false) {
+  const input = $('#prompt');
+  if (force || !input.value.trim()) {
+    input.value = state.contentCard?.text || state.assistantText || '';
+    state.pendingContentAction = state.contentCard ? { ref: state.contentCard.ref, action: 'edit' } : null;
+  }
+  invalidatePublicationApproval(); autosizePrompt(); updateNoteActions(); input.focus();
+}
+$('#noteComposerActions').addEventListener('click', event => {
+  const button = event.target.closest('[data-note-compose]');
+  if (!button || button.disabled || state.turnActive || submitting) return;
+  const action = button.dataset.noteCompose;
+  if (action === 'edit') { editCurrentNote(); return; }
+  const input = $('#prompt');
+  const typed = Boolean(input.value.trim());
+  const text = typed ? input.value : state.contentCard?.text || state.assistantText;
+  if (!text?.trim()) return;
+  const pending = state.pendingContentAction;
+  const request = typed && pending?.action === 'edit' ? { ref: pending.ref, action: `edit-${action}` }
+    : !typed && state.contentCard ? { ref: state.contentCard.ref, action }
+    : { action: `${action}-input` };
+  input.value = ''; autosizePrompt();
+  sendPrompt(text, false, request).catch(() => pushNotice('操作未完成，请检查后再试。'));
+});
 $('#resultContent').addEventListener('click', event => {
   const draftAction = event.target.closest('[data-draft-action]')?.dataset.draftAction;
   if (draftAction && !state.turnActive && !submitting) {
@@ -482,9 +523,7 @@ $('#resultContent').addEventListener('click', event => {
   if (!button || !card || state.turnActive || submitting) return;
   const action = button.dataset.contentAction;
   if (action === 'edit') {
-    invalidatePublicationApproval();
-    state.pendingContentAction = { ref: card.ref, action: 'edit' };
-    $('#prompt').value = card.text; autosizePrompt(); $('#prompt').focus(); return;
+    editCurrentNote(true); return;
   }
   button.disabled = true;
   sendPrompt(button.textContent, false, { ref: card.ref, action }).catch(() => pushNotice('操作未完成，请检查后再试。'));
@@ -502,7 +541,7 @@ function invalidatePublicationApproval() {
     api(`/api/runtime/controls/${encodeURIComponent(control.controlId)}/cancel`, {method:'POST'}).catch(error => pushNotice(error.message));
   }
 }
-$('#prompt').addEventListener('input', () => { autosizePrompt(); invalidatePublicationApproval(); });
+$('#prompt').addEventListener('input', () => { autosizePrompt(); invalidatePublicationApproval(); updateNoteActions(); });
 for (const id of ['publicationVisibility','publicationStatement']) $('#'+id).addEventListener('change', invalidatePublicationApproval);
 $("#prompt").addEventListener("keydown", (event) => { if (event.key !== "Enter") return; if (coarsePointer && !event.metaKey && !event.ctrlKey) return; if (!event.shiftKey) { event.preventDefault(); $("#promptForm").requestSubmit(); } });
 if (window.visualViewport) { visualViewport.addEventListener("resize", syncKeyboardInset); visualViewport.addEventListener("scroll", syncKeyboardInset); }

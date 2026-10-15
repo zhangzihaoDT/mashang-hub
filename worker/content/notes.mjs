@@ -67,11 +67,15 @@ export async function createNotesOperation({ root, dataDirectory = join(root, 'd
       if (!action && !intent) return null;
       if (task.actor?.kind !== 'user' || !task.actor.authenticated) return { text: '请先登录后保存或同步笔记。' };
       let draft, previous;
-      if (action) {
+      if (['save-input','sync-input'].includes(action?.action)) {
+        if (!task.prompt?.trim()) return { text: '请先输入笔记内容。' };
+        draft = { sessionId: task.sessionId, original_content: task.prompt, final_note: task.prompt, raw: false, localSaved: false, flomoTaskId: null };
+      } else if (action) {
         previous = await readSnapshot(action.ref);
-        if (previous.sessionId !== task.sessionId || !['edit', 'save', 'sync'].includes(action.action)) throw Error('INVALID_NOTE_ACTION');
+        if (previous.sessionId !== task.sessionId || !['edit', 'save', 'sync', 'edit-save', 'edit-sync'].includes(action.action)) throw Error('INVALID_NOTE_ACTION');
         draft = { ...previous, flomoTaskId: null };
-        if (action.action === 'edit') { draft.original_content = previous.original_content; draft.final_note = task.prompt; draft.localSaved = false; }
+        if (action.action.startsWith('edit')) { draft.original_content = previous.original_content; draft.final_note = task.prompt; draft.raw = false; draft.localSaved = Boolean(previous.localSaved && task.prompt === previous.final_note); if (!draft.localSaved) delete draft.localTaskId; }
+        if (['sync','edit-sync'].includes(action.action)) draft.raw = false;
       } else {
         const latest = await state.read(`sessions/${snapshotDigest(task.sessionId)}.json`);
         previous = latest ? await readSnapshot(latest.ref) : null;
@@ -84,10 +88,10 @@ export async function createNotesOperation({ root, dataDirectory = join(root, 'd
         draft = { sessionId: task.sessionId, original_content: original, final_note: final, raw: intent.raw, localSaved: Boolean(reuse && previous.localSaved), flomoTaskId: null };
       }
       if (signal?.aborted) return { text: '已取消。' };
-      const wantsSave = action?.action === 'save' || intent?.save;
-      const wantsSync = action?.action === 'sync' || intent?.sync;
+      const wantsSave = ['save','save-input','edit-save'].includes(action?.action) || intent?.save;
+      const wantsSync = ['sync','sync-input','edit-sync'].includes(action?.action) || intent?.sync;
       if (wantsSync) {
-        try { validateNote({ ...draft, target: 'flomo' }); }
+        try { validateNote({ ...draft, target: 'flomo' }); await notes(storage, { ...draft, target: 'flomo' }, { dryRun: true }); }
         catch { draft.final_note = await generate({ original: draft.final_note, prompt: '保留原意，整理为 Flomo 笔记', flomo: true, signal }); validateNote({ ...draft, target: 'flomo' }); }
       }
       if (wantsSave && !draft.localSaved) {

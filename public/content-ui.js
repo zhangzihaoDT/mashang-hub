@@ -1,6 +1,6 @@
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 export const contentCopy = {
-  notes: { welcome: '把想法，记下来。', description: '整理笔记、保存本地，也可以同步到 Flomo。', placeholder: '粘贴想法，或告诉我想记录、整理什么…' },
+  notes: { welcome: '把想法，记下来。', description: '整理笔记、保存本地，也可以同步到 Flomo。', placeholder: '在这里写笔记，或粘贴要保存的内容…' },
   publish: { welcome: '把想法，分享出去。', description: '起草微博，预览正文后确认发布。', placeholder: '起草微博，或粘贴准备发布的正文…' },
 };
 export function contentCardHTML(card, readOnly = false) {
