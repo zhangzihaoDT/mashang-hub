@@ -1,3 +1,4 @@
+import { trendComparison } from "./trend-comparison.js";
 import { snapshotColumns } from "./market-snapshot.js";
 const SERVICE_STATES = {
   ONLINE: { label: "在线", cls: "online" },
@@ -176,9 +177,9 @@ export function initRuntimeUI() {
     const pretty = v => /^\d{8}$/.test(v || '') ? `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6)}` : v || '—';
     const status = operation.lastRun?.status || 'UNKNOWN';
     const warnings = [...(q?.warnings || []), ...(q?.errors || [])];
-    const html = (operation.artifacts || []).find(a=>a.extension === '.html');
+    const html = (operation.artifacts || []).find(a=>a.extension === '.html' && a.digest !== d.trendComparison?.artifactDigest);
     const summary = d.marketSnapshot?.runId === publication?.run_id && d.marketSnapshot?.tradeDate === publication?.trade_date ? d.marketSnapshot : null;
-    const links = (operation.artifacts || []).map(a=>`<a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载 ${a.extension === '.html' ? 'HTML' : 'Markdown'}</a>`).join('');
+    const links = (operation.artifacts || []).filter(a=>a.digest !== d.trendComparison?.artifactDigest).map(a=>`<a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载 ${a.extension === '.html' ? 'HTML' : 'Markdown'}</a>`).join('');
     const source = q?.status === 'CONFIRMED' ? '来源已确认' : q?.status === 'COMPLETE' ? '包含兜底来源' : '待核验';
     const current = !safe ? workerOnline ? '快照已过期' : 'Worker 离线' : ({PUBLISHED:'已发布',RUNNING:'运行中',WAITING:'等待人工恢复',MISSED:'错过计划 · 待手动运行',FAILED:'运行失败 · 待手动恢复',BLOCKED:'已阻断',IDLE:'尚未运行'})[status] || status;
     const scheduleStatus = schedule ? (schedule.enabled ? '运行中' : ({ERROR:'异常',BLOCKED:'日历/配置阻断',OFFLINE:'未运行'})[schedule.agentStatus] || '状态未知') : '';
@@ -190,6 +191,7 @@ export function initRuntimeUI() {
         <div class="business-summary">${facts || `<p class="rt-sub">${escapeHTML(html ? 'Market Snapshot 尚未提供，请查询状态或查看正式日报' : '尚无正式发布日报')}</p>`}</div>
         <p class="rt-sub">发布于 ${escapeHTML(formatTime(publication?.published_at,d.timezone))} · Market Snapshot · ${escapeHTML(summary?.method || "正式事实只读摘要")}</p>
       </section>
+      ${trendComparison(d.trendComparison, operation.artifacts || [])}${d.trendComparisonError ? `<p class="rt-sub">${escapeHTML(d.trendComparisonError)}</p>` : ""}
       ${schedulePanel}
       <section><div class="business-section-head"><div><h2>当前任务</h2><p>目标 ${escapeHTML(pretty(d.targetDate))} · <strong>${escapeHTML(current)}</strong>${status === 'RUNNING' ? ` · ${escapeHTML(d.phase || '')} · ${escapeHTML(d.elapsedSeconds ?? 0)} 秒` : ''}</p></div><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled || status === 'BLOCKED' ? 'disabled' : ''}>${['MISSED','FAILED','WAITING'].includes(status) ? '手动运行 / 恢复' : '手动运行'}</button><button class="rt-btn" data-refresh ${querying ? 'disabled' : ''}>${querying ? '查询中…' : '查询状态'}</button></div></div>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}<p role="status" aria-live="polite" class="rt-sub">${escapeHTML(queryFeedback)}</p></section>
       <section><h2>正式发布结果 · ${escapeHTML(pretty(publication?.trade_date))}</h2><div class="rt-actions">${html ? `<a class="rt-btn" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看完整日报</a>` : '尚无正式日报'}${links}</div></section>
@@ -247,16 +249,16 @@ export function initRuntimeUI() {
         + (history.length ? `<details class="runtime-history"><summary>操作历史 · ${history.length}</summary><p>以下是已结束的操作记录，不代表当前服务状态。</p><ul class="rt-list">${history.map(controlItem).join("")}</ul></details>` : "");
       for (const cls of openedBusiness) { const el=mount.querySelector("."+cls); if(el) el.open=true; }
       if(workspace === 'aksignal') {
-        const report=document.getElementById('marketReport'), batch=mount.querySelector('.business-batch');
+        const report=document.getElementById('marketReport'), batch=mount.querySelector('.business-batch'), comparison=mount.querySelector('.trend-comparison');
         if(report && batch) {
-          const nextMarkup=batch.innerHTML;
+          const nextMarkup=batch.innerHTML+(comparison?.outerHTML || '');
           if(nextMarkup !== reportMarkup) {
             const openEvidence=[...report.querySelectorAll('.snapshot-evidence')].map(e=>e.open);
             const modeFocused=document.activeElement?.matches('[data-heat-mode]');
-            report.replaceChildren(batch); reportMarkup=nextMarkup;
+            report.replaceChildren(...[batch,comparison].filter(Boolean)); reportMarkup=nextMarkup;
             [...report.querySelectorAll('.snapshot-evidence')].forEach((e,i)=>e.open=Boolean(openEvidence[i]));
             if(modeFocused) report.querySelector('[data-heat-mode]')?.focus();
-          } else { batch.remove(); }
+          } else { batch.remove(); comparison?.remove(); }
           report.classList.remove('hidden');
         }
       }

@@ -91,3 +91,10 @@ mashang-service
 ## Personal Task Orchestrator
 
 Hub 是个人任务编排与控制中心。Conversation 只提供交互与上下文，Task 管理生命周期、审批、调度与恢复。Agent、Operation、External Action 共享通用任务管理层，业务执行仍属于 Worker / Capability。分阶段契约见 [task-orchestration.md](task-orchestration.md)。
+
+
+## Generic trend comparison metadata (2026-10-15)
+
+`operation.details.trendComparison` is a bounded, provider-authored display schema: title, independent start/end dates, unit, note, at most 1000 shared dates, and at most 12 labelled numerical series. The generic Hub renderer draws paths and legends, breaks lines at nulls, escapes text, and can resolve a report by artifact digest. It does not read datasets, calculate financial returns, choose stock pools, or execute refresh jobs. Provider source rules, current snapshots, admission and adjustment policy remain in the business repository.
+
+Comparison metadata and its pinned report are independent of a formal Daily publication. Their timestamp is displayed explicitly; they do not upgrade batch status or data completeness. The existing Worker artifact root, digest checks, 20 MiB cap and HTML CSP remain unchanged. Interactive HTML can be downloaded; restricted HTML previews retain provider-rendered static SVG fallbacks. The main summary panel renders the comparison after the existing summary; execution controls remain in their original area. These are local source changes until separately deployed.

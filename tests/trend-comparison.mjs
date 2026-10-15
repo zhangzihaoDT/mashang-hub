@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {trendComparison} from '../public/trend-comparison.js';
+import {operationDetails} from '../server/operation-details.mjs';
+const dates=['2024-07-16','2024-07-17','2024-07-18'];
+const value={trendComparison:{title:'<unsafe>',startDate:dates[0],endDate:dates.at(-1),dates,series:[{id:'a',label:'<script>',values:[100,null,102]},{id:'bm',label:'baseline',benchmark:true,values:[100,101,103]}]}};
+const clean=operationDetails(value).trendComparison;
+const html=trendComparison(clean);
+assert.ok(!html.includes('<script>'));
+assert.match(html,/M62.00/);assert.match(html,/M942.00/);assert.match(html,/stroke-dasharray/);
+assert.equal(operationDetails({trendComparison:{...value.trendComparison,dates:[dates[0],dates[0]]}}).trendComparison,undefined);
+const invalid=operationDetails({trendComparison:{...value.trendComparison,series:[{values:[100,Infinity,NaN]}]}}).trendComparison;
+assert.deepEqual(invalid.series[0].values,[100,null,null]);
+assert.equal(trendComparison(null),'');
+console.log('Generic comparison: escaping, null gaps, bounded metadata and dates passed');

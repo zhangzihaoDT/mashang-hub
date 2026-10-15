@@ -48,7 +48,7 @@
     "test:recovery-artifacts": "node tests/task-artifacts.mjs && node tests/recovery-artifacts-bridge.mjs",
     "test:operation-provider": "node tests/json-operation.mjs",
     "test:aksignal-bridge": "node tests/aksignal-hub-bridge.mjs",
-    "test:snapshot-visuals": "node tests/market-snapshot-visuals.mjs"
+    "test:snapshot-visuals": "node tests/market-snapshot-visuals.mjs && node tests/trend-comparison.mjs"
   },
   "engines": {
     "node": ">=22.13"
