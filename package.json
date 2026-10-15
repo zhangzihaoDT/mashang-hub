@@ -24,7 +24,7 @@
     "launchd:logs": "node scripts/launchd.mjs logs",
     "test:dom": "node tests/dom-contract.mjs",
     "test:task-state": "node tests/task-state.mjs",
-    "test:artifact": "node tests/artifact-contract.mjs",
+    "test:artifact": "node tests/artifact-contract.mjs && node tests/artifact-preview.mjs && node tests/artifact-preview-bridge.mjs",
     "test:result-contract": "node tests/result-contract.mjs",
     "test:workspaces": "node tests/workspaces.mjs",
     "test:task-workspace-bridge": "node tests/task-workspace-bridge.mjs",

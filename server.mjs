@@ -1,3 +1,4 @@
+import { htmlPreviewPolicy } from './server/artifact-preview.mjs';
 import { approvalProof } from './server/operation-proof.mjs';
 import { executionPolicy, executionTimes } from "./server/task-policy.mjs";
 import { TaskStore } from "./server/task-store.mjs";
@@ -443,8 +444,14 @@ async function requestArtifact(req, res, download) {
       return json(res, 409, { error: 'Artifact changed since publication' });
     }
     const headers = { "content-type": response.contentType, "content-disposition": `${download ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(response.filename)}`, "x-content-type-options": "nosniff" };
-    if (!download && artifact.extension === ".html") headers["content-security-policy"] = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-src 'none'; base-uri 'none'; form-action 'none'";
-    res.writeHead(200, headers); res.end(Buffer.from(response.contentBase64, "base64"));
+    const content = Buffer.from(response.contentBase64, "base64");
+    if (!download && artifact.extension === ".html") {
+      headers["content-security-policy"] = htmlPreviewPolicy(content);
+      headers["cross-origin-opener-policy"] = "same-origin";
+      headers["referrer-policy"] = "no-referrer";
+    }
+    headers["cache-control"] = "no-store";
+    res.writeHead(200, headers); res.end(content);
   } catch (error) { json(res, 504, { error: error.message }); }
 }
 

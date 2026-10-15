@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {htmlPreviewPolicy} from '../server/artifact-preview.mjs';
+const code="document.querySelector('button').onclick=()=>{};";
+const hash=createHash('sha256').update(code).digest('base64');
+const policy=htmlPreviewPolicy(Buffer.from(`<button onclick="evil()">test</button><script>${code}</script><script src="https://example.com/tracker.js"></script>`));
+assert.ok(policy.includes(`'sha256-${hash}'`));
+assert.match(policy,/sandbox allow-scripts allow-downloads/);
+assert.doesNotMatch(policy,/allow-same-origin|allow-top-navigation|allow-popups|unsafe-eval/);
+assert.match(policy,/connect-src 'none'/);
+assert.match(policy,/frame-src 'none'/);
+assert.match(policy,/form-action 'none'/);
+assert.doesNotMatch(policy,/script-src[^;]*unsafe-inline|example.com/);
+assert.match(htmlPreviewPolicy(Buffer.from('<p>static</p>')),/script-src 'none'/);
+assert.match(htmlPreviewPolicy(Buffer.from(Array.from({length:65},(_,i)=>`<script>console.log(${i})</script>`).join(''))),/script-src 'none'/);
+console.log('HTML preview: exact inline hashes, opaque sandbox, no network/eval/forms and bounded headers passed');
