@@ -17,7 +17,7 @@ assert.deepEqual(ids, ["fetch", "myknbase", "scheduler", "aksignal-scheduler"]);
 assert.equal(registry.services.length, 4);
 assert.deepEqual(registry.dependencies.map((dependency) => dependency.id), ["opencode"]);
 assert.equal(registry.jobs.length, 0);
-assert.deepEqual(registry.operations.map((operation) => operation.id), ["aksignal-daily", "aksignal-daily-maintenance-restart", "daily", "allupdate"]);
+assert.deepEqual(registry.operations.map((operation) => operation.id), ["aksignal-daily", "daily", "allupdate"]);
 const daily = registry.operations.find((operation) => operation.id === "daily");
 assert.equal(daily.label, "Daily pipeline");
 assert.equal(daily.group, "MASHANG-SERVICE");
@@ -62,8 +62,7 @@ assert.deepEqual(aksignalScheduler.control.stop.args, ["-m", "src.daily_schedule
 const aksignal = registry.operations.find((o) => o.id === "aksignal-daily");
 assert.deepEqual(aksignal.run.args, ["-m", "src.daily_schedule", "--manual-run"]);
 const aksignalRestart = registry.operations.find((o) => o.id === "aksignal-daily-maintenance-restart");
-assert.equal(aksignalRestart.workspace, "aksignal");
-assert.deepEqual(aksignalRestart.run.args, ["-m", "src.daily_schedule", "--manual-run", "--restart"]);
+assert.equal(aksignalRestart, undefined);
 
 const fetchControl = registry.services.find((s) => s.id === "fetch").control;
 assert.equal(fetchControl.start.detach, false);
@@ -92,7 +91,7 @@ assert.equal(fetch.probe.type, "http");
 assert.ok(overridden.services.some((s) => s.id === "extra"));
 assert.equal(overridden.services.length, 5);
 assert.equal(overridden.jobs.length, 0);
-assert.equal(overridden.operations.length, 5);
+assert.equal(overridden.operations.length, 4);
 assert.ok(overridden.operations.some((operation) => operation.id === "future-no-arg"), "Worker config can add an operation without a Hub mapping");
 
 console.log("Runtime registry checks passed");

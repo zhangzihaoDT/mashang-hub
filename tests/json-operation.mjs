@@ -44,7 +44,7 @@ try {
   assert.equal(op.cancellationSupported, false);
   assert.ok(!op.run.args.includes('--restart'));
   const maintenance = buildRegistry({ MASHANG_AKSIGNAL_ROOT: root }).operations.find(o=>o.id==='aksignal-daily-maintenance-restart');
-  assert.deepEqual(maintenance.run.args, ['-m','src.daily_schedule','--manual-run','--restart']);
+  assert.equal(maintenance, undefined);
   const registry = {runtimeDir:join(root,'runtime'),services:[],jobs:[],operations:[
     {id:'long-business',enabled:true,run:{command:process.execPath,args:['-e','setTimeout(()=>{},400)']}},
     {id:'short-trigger',enabled:true,requestOnly:true,run:{command:process.execPath,args:['-e','process.exit(0)']}},
