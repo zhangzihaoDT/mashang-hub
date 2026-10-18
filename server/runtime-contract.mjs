@@ -45,6 +45,7 @@ export function sanitizeRuntimeSnapshot(message) {
         label: shortString(service.label) || id,
         status: SERVICE_STATUS.has(service.status) ? service.status : "UNKNOWN",
         managed: Boolean(service.managed),
+        ...(service.presentation === "schedule-control" ? { presentation: service.presentation } : {}),
       };
       const workspace = shortString(service.workspace);
       if (workspace) clean.workspace = workspace;
@@ -104,6 +105,7 @@ export function sanitizeRuntimeSnapshot(message) {
         id,
         label: shortString(operation.label) || id,
         enabled: Boolean(operation.enabled),
+        ...(operation.presentation === "inline-action" ? { presentation: operation.presentation } : {}),
         ...(operation.requestOnly ? { requestOnly: true } : {}),
         ...(operation.details ? { details: operationDetails(operation.details), artifacts: operationArtifacts(operation.artifacts) } : {}),
         ...(operation.requiresSnapshot === true ? { requiresSnapshot: true } : {}),

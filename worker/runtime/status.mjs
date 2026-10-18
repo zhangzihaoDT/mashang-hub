@@ -38,6 +38,7 @@ export async function probeService(service, options = {}) {
   return {
     id: service.id,
     workspace: service.workspace ?? null,
+    presentation: service.presentation ?? null,
     label: service.label,
     group: service.group ?? null,
     summary: service.summary ?? null,
@@ -112,6 +113,7 @@ export async function collectStatus(registry, options = {}) {
     return {
       id: operation.id,
       workspace: operation.workspace ?? null,
+      presentation: operation.presentation ?? null,
       label: operation.label,
       group: operation.group ?? null,
       description: operation.description || "",

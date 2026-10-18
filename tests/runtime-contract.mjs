@@ -18,6 +18,7 @@ const clean = sanitizeRuntimeSnapshot({
   ],
   services: [
     { id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: true, group: "APPS", summary: "Fetch app", openUrl: "http://127.0.0.1:7860", detail: "HTTP 200", pid: 99, command: "rm -rf", path: "/local" },
+    { id: "aksignal-scheduler", status: "ONLINE", presentation: "schedule-control" },
     { id: "x", status: "BOGUS" },
     { id: "unsafe", status: "ONLINE", openUrl: "javascript:alert(1)" },
     { label: "no-id" },
@@ -27,7 +28,7 @@ const clean = sanitizeRuntimeSnapshot({
     { id: "j2", status: "RUNNING" },
   ],
   operations: [
-    { id: "future-operation", label: "Future operation", group: "MASHANG-SERVICE", description: "Generic description", enabled: true, cancellationSupported: true, timeoutMs: 7200000, command: "ignore", lastRun: { status: "RUNNING", startedAt: "2026-10-07T00:00:00.000Z", path: "/local", summary: "Working" } },
+    { id: "future-operation", label: "Future operation", group: "MASHANG-SERVICE", description: "Generic description", enabled: true, presentation: "inline-action", details: { logLines: ["failed at /Users/secret/run.log"] }, cancellationSupported: true, timeoutMs: 7200000, command: "ignore", lastRun: { status: "RUNNING", startedAt: "2026-10-07T00:00:00.000Z", path: "/local", summary: "Working" } },
     { id: "disabled", enabled: false, lastRun: { status: "INVALID" } },
     { label: "no-id", enabled: true },
   ],
@@ -35,6 +36,7 @@ const clean = sanitizeRuntimeSnapshot({
 
 assert.deepEqual(clean.services, [
   { id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: true, group: "APPS", summary: "Fetch app", openUrl: "http://127.0.0.1:7860/" },
+  { id: "aksignal-scheduler", label: "aksignal-scheduler", status: "ONLINE", managed: false, presentation: "schedule-control" },
   { id: "x", label: "x", status: "UNKNOWN", managed: false },
   { id: "unsafe", label: "unsafe", status: "ONLINE", managed: false },
 ]);
@@ -44,13 +46,13 @@ assert.deepEqual(clean.jobs, [
   { id: "j2", label: "j2", lastRun: { status: "UNKNOWN", startedAt: null, finishedAt: null } },
 ]);
 assert.deepEqual(clean.operations, [
-  { id: "future-operation", label: "Future operation", enabled: true, cancellationSupported: true, lastRun: { status: "RUNNING", startedAt: "2026-10-07T00:00:00.000Z", finishedAt: null, code: null, summary: "Working" }, group: "MASHANG-SERVICE", description: "Generic description", timeoutMs: 3600000 },
+  { id: "future-operation", label: "Future operation", enabled: true, presentation: "inline-action", details: { logLines: ["failed at [local log]"] }, artifacts: [], cancellationSupported: true, lastRun: { status: "RUNNING", startedAt: "2026-10-07T00:00:00.000Z", finishedAt: null, code: null, summary: "Working" }, group: "MASHANG-SERVICE", description: "Generic description", timeoutMs: 3600000 },
   { id: "disabled", label: "disabled", enabled: false, cancellationSupported: true, lastRun: { status: "UNKNOWN", startedAt: null, finishedAt: null, code: null } },
 ]);
 assert.equal(clean.sequence, 4);
 
 const serialized = JSON.stringify(clean);
-for (const leaked of ["detail", "pid", "command", "path", "failedStep", "source", "evil"]) {
+for (const leaked of ["\"detail\":", "pid", "command", "path", "failedStep", "source", "evil", "/Users/secret"]) {
   assert.equal(serialized.includes(leaked), false, `sanitized snapshot leaked "${leaked}"`);
 }
 

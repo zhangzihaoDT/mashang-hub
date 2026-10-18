@@ -1,0 +1,45 @@
+.aksignal-statusbar{display:flex;align-items:center;gap:10px;min-height:42px;padding:5px 28px;border-top:1px solid var(--line);color:var(--deep);font-size:12px;flex-shrink:0}
+.aksignal-statusbar>span:nth-child(2){font-weight:600;white-space:nowrap}
+.aksignal-status-detail{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.aksignal-statusbar .quiet{margin-left:auto;color:var(--blue);font-size:12px}
+.aksignal-status-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#9baab5}
+.aksignal-status-dot.published{background:#4c9a6a}.aksignal-status-dot.running{background:#d79a36;box-shadow:0 0 0 3px #d79a3625}.aksignal-status-dot.failed{background:#bf604b}.aksignal-status-dot.unknown{background:#9baab5}
+.aksignal-runtime-drawer{position:fixed;inset:0;margin:auto;width:min(700px,calc(100vw - 48px));max-width:none;height:auto;max-height:min(85dvh,760px);padding:0;border:1px solid #d9e4ea;border-radius:16px;background:var(--cream,#fff9ef);color:var(--text,#1f2d3d);box-shadow:0 24px 70px #06213d30;overflow:hidden}
+.aksignal-runtime-drawer[open]{display:flex;flex-direction:column}
+.aksignal-runtime-drawer::backdrop{background:#06213d52;backdrop-filter:blur(2px)}
+.aksignal-drawer-head{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:22px 28px 16px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.aksignal-drawer-head h2{margin:0;color:var(--deep);font-size:18px}.aksignal-drawer-head p{margin:5px 0 0;color:var(--muted);font-size:12px}.aksignal-drawer-head button{font-size:24px;line-height:1;padding:4px 8px}
+#conversationRuntime{margin:0;padding:0 28px 28px;max-height:none;overflow:auto;flex:1;min-height:0;border:0;font-size:13px}
+.aksignal-runtime-content{display:grid;gap:0}
+.aksignal-runtime-content .business-batch{padding:18px 0 20px;border-bottom:1px solid var(--line)}
+.aksignal-runtime-content .business-section-head{align-items:flex-start}.aksignal-runtime-content .business-section-head h2{margin:0;color:var(--blue);font-size:22px}
+.aksignal-runtime-content .business-badges{margin:12px 0 14px}.aksignal-runtime-content .business-summary{margin:16px 0;gap:18px}
+.aksignal-runtime-content .rt-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.aksignal-runtime-content .quality-summary{margin-top:14px;color:var(--muted);font-size:12px}.quality-summary summary{cursor:pointer;color:var(--blue)}.quality-summary p{margin:8px 0;line-height:1.6}
+.aksignal-runtime-content .trend-comparison{margin:0;padding:20px 0;border-bottom:1px solid var(--line)}
+.aksignal-runtime-content .trend-comparison h2{margin:0;color:var(--blue);font-size:17px}.comparison-refresh{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}.comparison-refresh .rt-sub{margin:0}.aksignal-runtime-content .trend-comparison>p{margin:7px 0;color:var(--muted)}
+.comparison-confirmation{display:flex;align-items:center;gap:8px;margin:10px 0;padding:9px 11px;background:#fff9ef;border:1px solid #ead9b7;border-radius:7px;color:#765b27;font-size:12px}.comparison-confirmation span{margin-right:auto}.comparison-confirmation .rt-btn{padding:6px 10px}
+.aksignal-runtime-content .runtime-group{padding:18px 0;border-bottom:1px solid var(--line)}
+.runtime-group-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.runtime-group h2{margin:0 0 6px;color:var(--deep);font-size:15px}.runtime-group p{margin:4px 0 10px;line-height:1.55}.runtime-group .rt-actions{margin-top:10px}
+.runtime-error{color:#a34735;background:#fff2ec;border-radius:7px;padding:10px 12px;font-size:12px;line-height:1.55}
+.aksignal-runtime-content .runtime-diagnostics{padding:15px 0;color:var(--muted);font-size:12px}.aksignal-runtime-content .runtime-diagnostics summary{cursor:pointer;color:var(--blue);font-weight:600}.aksignal-runtime-content .runtime-diagnostics p{line-height:1.6}.aksignal-runtime-content .runtime-facts{display:grid;gap:0;margin:12px 0}.aksignal-runtime-content .runtime-facts>div{font-size:11px;padding:6px 0}.aksignal-runtime-content .runtime-facts dd{overflow-wrap:anywhere;text-align:right}
+.runtime-log-tail{margin:12px 0}.runtime-log-tail h3{font-size:12px;color:var(--deep);margin:0 0 7px}.runtime-log-tail pre{max-height:240px;overflow:auto;margin:0;padding:10px;border:1px solid #e2e9ec;border-radius:7px;background:#fff;color:#526575;font:10px/1.55 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.aksignal-runtime-content .rt-control{margin:10px 0 0;background:#fff9ef;border:1px solid #e8dccb}
+#marketReport{padding:18px 24px 24px;border-bottom:0}
+#marketReport .business-batch{padding:20px;background:#fff;border:1px solid #e1e9ed;border-radius:12px}
+#marketReport .business-section-head{align-items:center}.business-batch h2{margin:0;color:var(--blue);font-size:20px}
+#marketReport .business-badges{margin:12px 0}.business-badges .runtime-state{margin:0!important}
+#marketReport .business-summary{margin:18px 0}.business-summary article{min-width:0}.business-summary h3{margin:0 0 9px;color:var(--deep);font-size:14px}.business-summary p{font-size:12px;line-height:1.65}
+#marketReport .snapshot-evidence{color:var(--muted)}#marketReport .quality-summary{padding-top:4px}
+#marketReport .trend-comparison{margin-top:14px;padding:18px 20px;background:#fff;border:1px solid #e1e9ed;border-radius:12px}
+#marketReport .trend-comparison h2{margin:0;color:var(--blue);font-size:17px}.trend-comparison .business-section-head{align-items:flex-start}.trend-comparison .rt-actions{margin-top:10px}
+#marketReport .comparison-refresh .rt-btn{white-space:nowrap}
+@media(max-width:700px){
+  .aksignal-statusbar{padding:5px 12px;min-height:40px;gap:7px;font-size:11px}.aksignal-status-detail{display:none!important}.aksignal-statusbar .quiet{font-size:11px}
+  .aksignal-runtime-drawer{inset:0;margin:auto;width:calc(100vw - 16px);height:auto;max-height:88dvh;border:1px solid #d9e4ea;border-radius:14px;box-shadow:0 20px 55px #06213d30}
+  .aksignal-drawer-head{padding:16px 18px 12px}#conversationRuntime{padding:0 18px calc(20px + env(safe-area-inset-bottom))}
+  #marketReport{padding:12px}.aksignal-runtime-content .business-summary{grid-template-columns:1fr;gap:8px}
+  #marketReport .business-batch,#marketReport .trend-comparison{padding:15px}
+  #marketReport .business-section-head{align-items:flex-start;flex-direction:column;gap:10px}
+  .comparison-refresh{justify-content:flex-start}.runtime-group-head{align-items:flex-start}
+}

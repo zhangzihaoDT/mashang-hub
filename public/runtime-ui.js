@@ -69,6 +69,12 @@ export function initRuntimeUI() {
   const conversationMount = document.getElementById("conversationRuntime");
   const independentMount = document.getElementById("independentRuntime");
   const businessMount = document.getElementById("businessRuntime");
+  const marketMount = document.getElementById("marketReport");
+  const runtimeDrawer = document.getElementById("aksignalRuntimeDrawer");
+  const runtimeStatusBar = document.getElementById("aksignalStatusBar");
+  const runStatusText = document.getElementById("aksignalRunStatus");
+  const runStatusDetail = document.getElementById("aksignalRunDetail");
+  const runStatusDot = document.getElementById("aksignalRunDot");
   let workspace = "service";
   let controlError = "";
   let queryFeedback = "";
@@ -171,33 +177,81 @@ export function initRuntimeUI() {
     const retry = business.retryAt ? `<span class="rt-sub">下次可重试 ${escapeHTML(formatTime(business.retryAt))}</span>` : "";
     return `<li class="rt-item"><span class="rt-dot ${state.cls}"></span><div class="rt-main"><strong>${escapeHTML(operation.label || operation.id)}</strong><span class="rt-sub">${detail}</span>${description}<span class="rt-sub">${escapeHTML(facts)}</span>${feedback}${retry}${publication}${warnings}${attachments}</div><div class="rt-actions">${actions}</div></li>`;
   }
-  function businessItem(operation) {
+  function dailyStatusLabel(status) {
+    return ({PUBLISHED:"任务完成",RUNNING:"更新中",WAITING:"等待恢复",MISSED:"错过计划 · 待运行",FAILED:"更新失败 · 待恢复",BLOCKED:"运行受阻",IDLE:"尚未运行"})[status] || status || "状态未知";
+  }
+  function businessItem(operation, schedulerService, inlineOperations, activeActions) {
     const d = operation.details || {}, q = d.quality, publication = d.publication, schedule = d.schedule;
     const safe = workerOnline && !snapshotStale();
-    const pretty = v => /^\d{8}$/.test(v || '') ? `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6)}` : v || '—';
+    const pretty = v => /^\d{8}$/.test(v || '') ? `${v.slice(4,6)}/${v.slice(6)}` : /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? `${v.slice(5,7)}/${v.slice(8,10)}` : v || '—';
     const status = operation.lastRun?.status || 'UNKNOWN';
     const warnings = [...(q?.warnings || []), ...(q?.errors || [])];
     const html = (operation.artifacts || []).find(a=>a.extension === '.html' && a.digest !== d.trendComparison?.artifactDigest);
+    const markdown = (operation.artifacts || []).find(a=>a.extension === '.md');
     const summary = d.marketSnapshot?.runId === publication?.run_id && d.marketSnapshot?.tradeDate === publication?.trade_date ? d.marketSnapshot : null;
-    const links = (operation.artifacts || []).filter(a=>a.digest !== d.trendComparison?.artifactDigest).map(a=>`<a href="/api/artifacts/download?artifactId=${encodeURIComponent(a.artifactId)}" download>下载 ${a.extension === '.html' ? 'HTML' : 'Markdown'}</a>`).join('');
-    const source = q?.status === 'CONFIRMED' ? '来源已确认' : q?.status === 'COMPLETE' ? '包含兜底来源' : '待核验';
-    const current = !safe ? workerOnline ? '快照已过期' : 'Worker 离线' : ({PUBLISHED:'已发布',RUNNING:'运行中',WAITING:'等待人工恢复',MISSED:'错过计划 · 待手动运行',FAILED:'运行失败 · 待手动恢复',BLOCKED:'已阻断',IDLE:'尚未运行'})[status] || status;
-    const scheduleStatus = schedule ? (schedule.enabled ? '运行中' : ({ERROR:'异常',BLOCKED:'日历/配置阻断',OFFLINE:'未运行'})[schedule.agentStatus] || '状态未知') : '';
-    const schedulePanel = schedule ? `<section><h2>08:30 定时任务</h2><p>调度器 ${scheduleStatus} · 下次计划时点 ${escapeHTML(formatTime(schedule.nextScheduledAt,d.timezone))}</p><p>最近检查 ${escapeHTML(formatTime(schedule.lastCheckedAt,d.timezone))} · 待手动处理 ${escapeHTML(schedule.manualPendingCount ?? 0)} 项</p><p class="rt-sub">错过时点或运行失败不会自动重试；通过“手动运行/恢复”处理。重启调度器只重启定时进程。</p></section>` : '';
+    const qualityCount = warnings.length;
+    const publicationDate = publication?.trade_date;
+    const comparisonOperation = inlineOperations.find(item => item.enabled) || inlineOperations[0];
+    const updateError = d.error ? `<p class="runtime-error" role="alert">${escapeHTML(d.error)}</p>` : '';
+    const dailyActiveControl = activeActions.filter(item=>item.targetId===operation.id);
+    const dailyControls = activeActions.filter(item => item.targetId === operation.id).map(controlItem).join('');
+    const schedulerControls = activeActions.filter(item => schedulerService && item.targetId === schedulerService.id).map(controlItem).join('');
+    const compareControl = comparisonOperation && activeActions.find(item=>item.targetId===comparisonOperation.id);
+    const comparisonViewOperation = compareControl
+      ? {...comparisonOperation,lastRun:{...comparisonOperation.lastRun,status:compareControl.status === 'AWAITING_PERMISSION' ? 'AWAITING_PERMISSION' : 'RUNNING'}}
+      : comparisonOperation;
+    const scheduleOnline = schedulerService?.status === 'ONLINE';
+    const scheduleLabel = schedule?.enabled ? '在线' : scheduleOnline ? '已连接 · 等待计划' : ({ERROR:'异常',BLOCKED:'日历受阻',OFFLINE:'已暂停'})[schedule?.agentStatus] || '状态未知';
+    const scheduleAction = schedulerService && safe && schedulerControls.length === 0
+      ? scheduleOnline
+        ? `<button class="rt-btn" data-op="down" data-target="${escapeHTML(schedulerService.id)}">暂停自动调度</button>`
+        : schedulerService.status === 'OFFLINE'
+          ? `<button class="rt-btn" data-op="up" data-target="${escapeHTML(schedulerService.id)}">恢复自动调度</button>`
+          : ''
+      : '';
     const facts = summary ? snapshotColumns(summary,heatMode) : "";
-    return `<li class="business-operation">
-      <section class="business-batch"><div class="business-section-head"><h2>市场状态摘要</h2><strong class="business-date">${escapeHTML(pretty(publication?.trade_date))}</strong></div>
-        <div class="business-badges"><span class="runtime-state online">${escapeHTML(source)}</span><span class="runtime-state ${q?.data_complete === false ? 'unknown' : 'completed'}">${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'}</span></div>
+    const updateRunLabel = dailyStatusLabel(status);
+    const phase = status === 'RUNNING' ? ` · ${d.phase ? escapeHTML(d.phase) : ''}${d.elapsedSeconds != null ? ` · ${escapeHTML(d.elapsedSeconds)} 秒` : ''}` : '';
+    const runDisabled = !safe || !operation.enabled || dailyActiveControl.length>0 || ['BLOCKED','PUBLISHED','RUNNING'].includes(status);
+    const runLabel = dailyActiveControl.some(item=>item.status==='AWAITING_PERMISSION') ? '等待确认…' : status === 'PUBLISHED' ? '已完成' : status === 'RUNNING' || dailyActiveControl.length ? '运行中' : ['MISSED','FAILED','WAITING'].includes(status) ? '手动运行 / 恢复' : '手动运行';
+    const statusDate = d.targetDate || publicationDate;
+    const stripStatus = !workerOnline ? 'Worker 离线 · 保留最近状态' : snapshotStale() ? '状态快照过期' : dailyActiveControl.some(item=>item.status==='AWAITING_PERMISSION') ? `${pretty(statusDate)} 等待确认运行` : `${pretty(statusDate)} ${updateRunLabel}${status === 'RUNNING' ? phase : ''}`;
+    if (runtimeStatusBar) {
+      runtimeStatusBar.classList.toggle('hidden', workspace !== 'aksignal');
+      if (workspace === 'aksignal') {
+        if (runStatusText) runStatusText.textContent = stripStatus;
+        if (runStatusDetail) {
+          runStatusDetail.textContent = d.error || '';
+          runStatusDetail.title = d.error || '';
+          runStatusDetail.classList.toggle('hidden', !d.error);
+        }
+        if (runStatusDot) runStatusDot.className = `aksignal-status-dot ${status === 'FAILED' || status === 'BLOCKED' ? 'failed' : status === 'RUNNING' ? 'running' : status === 'PUBLISHED' ? 'published' : 'unknown'}`;
+      }
+    }
+    const qualityBadge = !q ? '质量待核验' : `${q.data_complete === false ? '数据不完整' : q.data_complete === true ? '数据完整' : '质量待核验'}${qualityCount ? ` · ${qualityCount} 项提示` : ''}`;
+    const batch = `<section class="business-batch"><div class="business-section-head"><div><h2>Market Facts</h2><p class="rt-sub">最新正式日报${publicationDate ? ` · ${escapeHTML(pretty(publicationDate))}` : ''}</p></div><div class="rt-actions">${html ? `<a class="rt-btn" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看完整日报</a>` : ''}${markdown ? `<a href="/api/artifacts/download?artifactId=${encodeURIComponent(markdown.artifactId)}" download>下载 Markdown</a>` : ''}</div></div>
+        <div class="business-badges"><span class="runtime-state ${publication ? 'completed' : 'unknown'}">${publication ? '正式日报已发布' : '暂无正式日报'}</span><span class="runtime-state ${q?.data_complete === false ? 'unknown' : q?.data_complete === true ? 'completed' : 'unknown'}">${escapeHTML(qualityBadge)}</span></div>
         <div class="business-summary">${facts || `<p class="rt-sub">${escapeHTML(html ? 'Market Snapshot 尚未提供，请查询状态或查看正式日报' : '尚无正式发布日报')}</p>`}</div>
-        <p class="rt-sub">发布于 ${escapeHTML(formatTime(publication?.published_at,d.timezone))} · Market Snapshot · ${escapeHTML(summary?.method || "正式事实只读摘要")}</p>
-      </section>
-      ${trendComparison(d.trendComparison, operation.artifacts || [])}${d.trendComparisonError ? `<p class="rt-sub">${escapeHTML(d.trendComparisonError)}</p>` : ""}
-      ${schedulePanel}
-      <section><div class="business-section-head"><div><h2>当前任务</h2><p>目标 ${escapeHTML(pretty(d.targetDate))} · <strong>${escapeHTML(current)}</strong>${status === 'RUNNING' ? ` · ${escapeHTML(d.phase || '')} · ${escapeHTML(d.elapsedSeconds ?? 0)} 秒` : ''}</p></div><div class="rt-actions"><button class="rt-btn" data-op="run" data-target="${escapeHTML(operation.id)}" ${!safe || !operation.enabled || status === 'BLOCKED' ? 'disabled' : ''}>${['MISSED','FAILED','WAITING'].includes(status) ? '手动运行 / 恢复' : '手动运行'}</button><button class="rt-btn" data-refresh ${querying ? 'disabled' : ''}>${querying ? '查询中…' : '查询状态'}</button></div></div>${d.error ? `<p role="alert">${escapeHTML(d.error)}</p>` : ''}<p role="status" aria-live="polite" class="rt-sub">${escapeHTML(queryFeedback)}</p></section>
-      <section><h2>正式发布结果 · ${escapeHTML(pretty(publication?.trade_date))}</h2><div class="rt-actions">${html ? `<a class="rt-btn" href="/api/artifacts/content?artifactId=${encodeURIComponent(html.artifactId)}" target="_blank" rel="noopener">查看完整日报</a>` : '尚无正式日报'}${links}</div></section>
-      <section><h2>数据质量</h2><p class="business-quality ${q?.data_complete === false ? 'incomplete' : ''}">${q?.data_complete === false ? '数据不完整' : q?.data_complete === true ? '数据完整' : '待核验'} · ${warnings.length} 项警告${q?.truncated ? '（部分截断）' : ''}</p>${(d.metrics || []).map(m=>`<p>${escapeHTML(m.label)} <strong>${escapeHTML(m.value)}</strong></p>`).join('')}<details class="business-warnings"><summary>查看全部质量记录</summary>${warnings.map(v=>`<p>${escapeHTML(v)}</p>`).join('') || '<p>暂无质量记录</p>'}${q?.truncated ? '<p>完整证据见正式日报附件。</p>' : ''}</details></section>
-      <details class="business-diagnostics"><summary>运行详情</summary><dl class="runtime-facts"><div><dt>Worker</dt><dd>${escapeHTML(snapshot?.workerId || '—')}</dd></div><div><dt>快照</dt><dd>${escapeHTML(formatTime(snapshot?.generatedAt))}</dd></div><div><dt>正式 run_id</dt><dd>${escapeHTML(publication?.run_id || '—')}</dd></div><div><dt>当前 run_id</dt><dd>${escapeHTML(d.runId || '—')}</dd></div><div><dt>触发来源</dt><dd>${escapeHTML(d.triggerSource === 'scheduled' ? '定时' : d.triggerSource === 'manual' ? '人工' : d.triggerSource === 'manual_restart' ? '维护重启' : '—')}</dd></div><div><dt>阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div><div><dt>data_complete</dt><dd>${escapeHTML(q?.data_complete ?? 'unknown')}</dd></div></dl><p class="rt-sub">${escapeHTML(operation.description || '')}</p></details>
-    </li>`;
+        <p class="rt-sub">发布于 ${escapeHTML(formatTime(publication?.published_at,d.timezone))} · ${escapeHTML(summary?.method || "正式事实只读摘要")}</p>
+        ${qualityCount ? `<details class="quality-summary"><summary>查看质量提示 · ${qualityCount}</summary>${warnings.map(value=>`<p>${escapeHTML(value)}</p>`).join('')}${q?.truncated ? '<p>完整证据请查看正式日报。</p>' : ''}</details>` : ''}
+      </section>`;
+    const comparison = trendComparison(d.trendComparison, operation.artifacts || [], comparisonViewOperation, safe, compareControl);
+    const compareError = d.trendComparisonError ? `<p class="trend-comparison-error rt-sub" role="status">${escapeHTML(d.trendComparisonError)}</p>` : '';
+    const logTail = Array.isArray(d.logLines) && d.logLines.length ? `<section class="runtime-log-tail"><h3>最近运行日志</h3><pre>${d.logLines.map(line=>escapeHTML(line)).join('\n')}</pre></section>` : '';
+    const diagnostics = `<details class="runtime-diagnostics"><summary>诊断详情${qualityCount ? ` · ${qualityCount} 项质量提示` : ''}</summary><p class="business-quality ${q?.data_complete === false ? 'incomplete' : ''}">${escapeHTML(qualityBadge)}${q?.truncated ? '（部分内容截断）' : ''}</p>${warnings.map(value=>`<p>${escapeHTML(value)}</p>`).join('') || '<p>暂无质量提示</p>'}${(d.metrics || []).map(m=>`<p>${escapeHTML(m.label)} <strong>${escapeHTML(m.value)}</strong></p>`).join('')}${logTail}<dl class="runtime-facts"><div><dt>Worker</dt><dd>${escapeHTML(snapshot?.workerId || '—')}</dd></div><div><dt>快照</dt><dd>${escapeHTML(formatTime(snapshot?.generatedAt))}</dd></div><div><dt>正式 run_id</dt><dd>${escapeHTML(publication?.run_id || '—')}</dd></div><div><dt>当前 run_id</dt><dd>${escapeHTML(d.runId || '—')}</dd></div><div><dt>触发来源</dt><dd>${escapeHTML(d.triggerSource === 'scheduled' ? '定时' : d.triggerSource === 'manual' ? '人工' : d.triggerSource === 'manual_restart' ? '维护重启' : '—')}</dd></div><div><dt>阶段</dt><dd>${escapeHTML(d.phase || '—')} · ${escapeHTML(d.completedSteps ?? 0)}/${escapeHTML(d.totalSteps ?? 0)}</dd></div></dl><p class="rt-sub">${escapeHTML(operation.description || '')}</p></details>`;
+    const currentTask = `<section class="runtime-group runtime-current-task"><div class="runtime-group-head"><div><h2>当前任务</h2><p>目标 ${escapeHTML(pretty(d.targetDate))} · <strong>${escapeHTML(updateRunLabel)}</strong>${phase}</p></div><button class="rt-btn" data-refresh ${querying ? 'disabled' : ''}>${querying ? '查询中…' : '刷新状态'}</button></div>${updateError}<p role="status" aria-live="polite" class="rt-sub">${escapeHTML(queryFeedback)}</p><div class="rt-actions"><button class="rt-btn runtime-primary" data-op="run" data-target="${escapeHTML(operation.id)}" ${runDisabled?'disabled':''}>${runLabel}</button></div>${dailyControls}</section>`;
+    const schedulePanel = `<section class="runtime-group runtime-schedule"><div class="runtime-group-head"><div><h2>自动调度</h2><p>调度器 <strong>${escapeHTML(scheduleLabel)}</strong> · 下次运行 ${escapeHTML(formatTime(schedule?.nextScheduledAt,d.timezone))}</p></div></div><p class="rt-sub">${schedule?.missedPolicy === 'manual_only' ? '错过或失败后不会自动补跑。' : ''}</p><div class="rt-actions">${scheduleAction}</div>${schedulerControls}</section>`;
+    return `<div class="aksignal-runtime-content">${batch}${comparison}${compareError}${currentTask}${schedulePanel}${diagnostics}</div>`;
+  }
+  function openRuntimeDrawer() {
+    if (!runtimeDrawer || runtimeDrawer.open) return;
+    if (typeof runtimeDrawer.showModal === 'function') runtimeDrawer.showModal();
+    else runtimeDrawer.open = true;
+  }
+  function closeRuntimeDrawer() {
+    if (!runtimeDrawer) return;
+    if (typeof runtimeDrawer.close === 'function') runtimeDrawer.close();
+    else runtimeDrawer.open = false;
   }
   function controlItem(control) {
     const state = stateOf(CONTROL_STATES, control.status);
@@ -225,46 +279,55 @@ export function initRuntimeUI() {
     const jobs = snapshot?.jobs || [];
     const operations = snapshot?.operations || [];
     const mount = workspace === "aksignal" ? conversationMount : ["fetch", "knbase", "miit"].includes(workspace) ? independentMount : conversationMount;
+    runtimeStatusBar?.classList.toggle('hidden', workspace !== 'aksignal');
+    if (workspace !== 'aksignal' && runtimeDrawer?.open) runtimeDrawer.close?.();
     if (mount) {
       // Older Workers may omit workspace metadata. Only presentation uses these legacy IDs/groups.
       const belongs = item => (item.workspace || ({fetch:"fetch",myknbase:"knbase"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
-      const entries = [...services.filter(belongs).map(mount === independentMount || workspace === "aksignal" ? workspaceServiceItem : serviceItem), ...jobs.filter(belongs).map(jobItem), ...operations.filter(belongs).map(operation => workspace === "aksignal" && operation.requestOnly ? businessItem(operation) : operationItem(operation))];
+      const matchingServices = services.filter(belongs);
+      const matchingJobs = jobs.filter(belongs);
+      const matchingOperations = operations.filter(belongs);
+      const targetIds = new Set([...matchingServices, ...matchingJobs, ...matchingOperations].map(item=>item.id));
+      const matchingControls = controlList.filter(item=>targetIds.has(item.targetId));
+      const activeActions = matchingControls.filter(item=>ACTIVE_CONTROL_STATUSES.has(item.status));
+      const history = matchingControls.filter(item=>!ACTIVE_CONTROL_STATUSES.has(item.status) && Date.now()-(item.updatedAt ?? item.createdAt ?? 0)<=RECENT_MAX_AGE_MS).slice(0,RECENT_LIMIT);
+      const dailyOperation = matchingOperations.find(operation=>operation.requestOnly);
+      const inlineOperations = matchingOperations.filter(operation=>operation.presentation === 'inline-action');
+      const scheduleService = matchingServices.find(service=>service.presentation === 'schedule-control');
+      const entries = workspace === 'aksignal' && dailyOperation
+        ? [businessItem(dailyOperation,scheduleService,inlineOperations,activeActions)]
+        : [...matchingServices.map(mount === independentMount ? workspaceServiceItem : serviceItem), ...matchingJobs.map(jobItem), ...matchingOperations.filter(operation=>operation.presentation !== 'inline-action').map(operationItem)];
       if (mount === independentMount) {
         const service = services.find(belongs);
         const badge = document.getElementById("independentStatus");
         const status = workerOnline ? stateOf(SERVICE_STATES, service?.status) : SERVICE_STATES.UNKNOWN;
         if (badge) { badge.textContent = workerOnline ? service?.status || "Unknown" : "Unknown"; badge.className = `runtime-state ${status.cls}`; }
       }
-      const targetIds = new Set([...services, ...jobs, ...operations].filter(belongs).map(item=>item.id));
-      const matching = controlList.filter(item=>targetIds.has(item.targetId));
-      const actions = [...matching.filter(item=>ACTIVE_CONTROL_STATUSES.has(item.status)), ...matching.filter(item=>!ACTIVE_CONTROL_STATUSES.has(item.status) && Date.now()-(item.updatedAt ?? item.createdAt ?? 0)<=RECENT_MAX_AGE_MS).slice(0,RECENT_LIMIT)];
-      const activeActions = actions.filter(item=>ACTIVE_CONTROL_STATUSES.has(item.status));
-      const history = actions.filter(item=>!ACTIVE_CONTROL_STATUSES.has(item.status));
-      const openedBusiness = [...mount.querySelectorAll(".business-warnings[open],.business-diagnostics[open]")].map(e=>e.className);
       const historyOpen = mount.querySelector(".runtime-history")?.open;
       const detailsOpen = mount.querySelector(".runtime-diagnostics")?.open;
       mount.innerHTML = (controlError ? `<p role="alert" class="rt-empty">${escapeHTML(controlError)}</p>` : "") + (mount === independentMount || workspace === "aksignal" ? "" : `<div class="workspace-runtime-meta">运行节点 · ${escapeHTML(snapshot?.workerId || "Mac Worker")} · ${workerOnline ? "Worker 在线" : "Worker 离线"} · 快照 ${escapeHTML(formatTime(snapshot?.generatedAt))}</div>`)
-        + (workspace === "publish" ? `<p class="rt-empty">${operations.some(item=>belongs(item) && item.requiresSnapshot) ? "发布审批与结果在对话中展示。" : "正式发布尚未接入：Worker 尚未注册快照发布能力。"}</p>` : `<ul class="rt-list">${entries.join("") || '<li class="rt-empty">尚无属于此工作空间的 Runtime 记录</li>'}</ul><p class="workspace-runtime-note ${mount === independentMount || workspace === 'aksignal' ? 'hidden' : ''}">服务状态来自 Worker 探测，不等于本设备可访问。Offline 表示探测未通过，不能单凭它认定进程已停止。日志目前可在 Worker 本机通过 mashang logs 查看。</p>`)
-        + (activeActions.length ? `<ul class="rt-list rt-current-actions">${activeActions.map(controlItem).join("")}</ul>` : "")
-        + (history.length ? `<details class="runtime-history"><summary>操作历史 · ${history.length}</summary><p>以下是已结束的操作记录，不代表当前服务状态。</p><ul class="rt-list">${history.map(controlItem).join("")}</ul></details>` : "");
-      for (const cls of openedBusiness) { const el=mount.querySelector("."+cls); if(el) el.open=true; }
+        + (workspace === "publish" ? `<p class="rt-empty">${matchingOperations.some(item=>item.requiresSnapshot) ? "发布审批与结果在对话中展示。" : "正式发布尚未接入：Worker 尚未注册快照发布能力。"}</p>` : workspace === 'aksignal'
+          ? entries.join("") || '<p class="rt-empty">等待 Worker 状态快照</p>'
+          : `<ul class="rt-list">${entries.join("") || '<li class="rt-empty">尚无属于此工作空间的 Runtime 记录</li>'}</ul><p class="workspace-runtime-note ${mount === independentMount ? 'hidden' : ''}">服务状态来自 Worker 探测，不等于本设备可访问。Offline 表示探测未通过，不能单凭它认定进程已停止。日志目前可在 Worker 本机通过 mashang logs 查看。</p>`)
+        + (workspace !== 'aksignal' && activeActions.length ? `<ul class="rt-list rt-current-actions">${activeActions.map(controlItem).join("")}</ul>` : "")
+        + (workspace !== 'aksignal' && history.length ? `<details class="runtime-history"><summary>操作历史 · ${history.length}</summary><p>以下是已结束的操作记录，不代表当前服务状态。</p><ul class="rt-list">${history.map(controlItem).join("")}</ul></details>` : "");
       if(workspace === 'aksignal') {
-        const report=document.getElementById('marketReport'), batch=mount.querySelector('.business-batch'), comparison=mount.querySelector('.trend-comparison');
+        const report=marketMount, batch=mount.querySelector('.business-batch'), comparison=mount.querySelector('.trend-comparison'), comparisonError=mount.querySelector('.trend-comparison-error');
         if(report && batch) {
-          const nextMarkup=batch.innerHTML+(comparison?.outerHTML || '');
+          const nextMarkup=batch.innerHTML+(comparison?.outerHTML || '')+(comparisonError?.outerHTML || '');
           if(nextMarkup !== reportMarkup) {
             const openEvidence=[...report.querySelectorAll('.snapshot-evidence')].map(e=>e.open);
             const modeFocused=document.activeElement?.matches('[data-heat-mode]');
-            report.replaceChildren(...[batch,comparison].filter(Boolean)); reportMarkup=nextMarkup;
+            report.replaceChildren(...[batch,comparison,comparisonError].filter(Boolean)); reportMarkup=nextMarkup;
             [...report.querySelectorAll('.snapshot-evidence')].forEach((e,i)=>e.open=Boolean(openEvidence[i]));
             if(modeFocused) report.querySelector('[data-heat-mode]')?.focus();
-          } else { batch.remove(); comparison?.remove(); }
+          } else { batch.remove(); comparison?.remove(); comparisonError?.remove(); }
           report.classList.remove('hidden');
         }
       }
       if (historyOpen && mount.querySelector(".runtime-history")) mount.querySelector(".runtime-history").open = true;
       if (detailsOpen && mount.querySelector(".runtime-diagnostics")) mount.querySelector(".runtime-diagnostics").open = true;
-      if (actions.some(item=>item.status === "AWAITING_PERMISSION") && mount === conversationMount) mount.closest("details").open = true;
+      if (activeActions.some(item=>item.status === "AWAITING_PERMISSION" && !inlineOperations.some(operation=>operation.id===item.targetId)) && mount === conversationMount) openRuntimeDrawer();
       if (!workerOnline || snapshotStale()) for (const button of mount.querySelectorAll("button:not([data-refresh])")) button.disabled = true;
     }
   }
@@ -327,9 +390,11 @@ export function initRuntimeUI() {
     } catch { /* SSE will reconcile state. */ }
   }
 
-  const marketMount=document.getElementById('marketReport');
   marketMount?.addEventListener('change',event=>{if(event.target.matches('[data-heat-mode]')){heatMode=event.target.value;render();}});
   marketMount?.addEventListener('click',event=>{const cell=event.target.closest('[data-heat-info]');if(cell) marketMount.querySelector('.heat-info').textContent=cell.dataset.heatInfo;});
+  document.getElementById('openAksignalRuntime')?.addEventListener('click',openRuntimeDrawer);
+  document.getElementById('closeAksignalRuntime')?.addEventListener('click',closeRuntimeDrawer);
+  runtimeDrawer?.addEventListener('click',event=>{if(event.target===runtimeDrawer) closeRuntimeDrawer();});
   const handleClick = (event) => {
     if (event.target.closest("[data-refresh]")) { refresh(true); return; }
     const action = event.target.closest("[data-op]");
@@ -340,7 +405,7 @@ export function initRuntimeUI() {
     const cancel = event.target.closest("[data-cancel]");
     if (cancel) cancelControl(cancel.dataset.control);
   };
-  for (const mount of [conversationMount, independentMount, businessMount].filter(Boolean)) mount.addEventListener("click", handleClick);
+  for (const mount of [conversationMount, independentMount, businessMount, marketMount].filter(Boolean)) mount.addEventListener("click", handleClick);
   const interval = window.setInterval(refresh, 15000);
   refresh();
 

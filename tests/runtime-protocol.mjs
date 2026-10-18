@@ -7,12 +7,13 @@ const status = {
   ],
   services: [
     { id: "fetch", label: "mashang-fetch", group: "APPS", online: true, managed: false, openUrl: "http://127.0.0.1:7860", detail: "HTTP 200", pid: 123, url: "http://127.0.0.1:7860/api/formats", legacy: [{ pid: 1, command: "old" }] },
+    { id: "scheduler", label: "Scheduler", online: true, presentation: "schedule-control" },
   ],
   jobs: [
     { id: "daily", label: "Daily pipeline", group: "MASHANG-SERVICE", status: "FAILED", startedAt: "2026-10-07 09:00:01", finishedAt: "2026-10-07 09:00:01", failedStep: "refresh_full", source: "/local/path" },
   ],
   operations: [
-    { id: "future-operation", label: "Future operation", group: "MASHANG-SERVICE", description: "A generic operation", enabled: true, cancellationSupported: true, timeoutMs: 900000, lastRun: { status: "COMPLETED", startedAt: "2026-10-07T00:00:00.000Z", finishedAt: "2026-10-07T00:01:00.000Z", code: 0, summary: "Completed successfully" }, run: { command: "secret-command", args: ["secret-arg"] } },
+    { id: "future-operation", label: "Future operation", group: "MASHANG-SERVICE", description: "A generic operation", enabled: true, presentation: "inline-action", cancellationSupported: true, timeoutMs: 900000, lastRun: { status: "COMPLETED", startedAt: "2026-10-07T00:00:00.000Z", finishedAt: "2026-10-07T00:01:00.000Z", code: 0, summary: "Completed successfully" }, run: { command: "secret-command", args: ["secret-arg"] } },
   ],
 };
 
@@ -23,6 +24,7 @@ assert.equal(snapshot.workerId, "w1");
 assert.equal(snapshot.sequence, 3);
 assert.deepEqual(snapshot.dependencies, [{ id: "opencode", label: "OpenCode", status: "OFFLINE" }]);
 assert.deepEqual(snapshot.services[0], { id: "fetch", label: "mashang-fetch", status: "ONLINE", managed: false, group: "APPS", openUrl: "http://127.0.0.1:7860" });
+assert.equal(snapshot.services[1].presentation, "schedule-control");
 assert.deepEqual(snapshot.jobs[0], {
   id: "daily",
   label: "Daily pipeline",
@@ -32,6 +34,7 @@ assert.deepEqual(snapshot.jobs[0], {
 assert.deepEqual(snapshot.operations[0], {
   id: "future-operation",
   label: "Future operation",
+  presentation: "inline-action",
   group: "MASHANG-SERVICE",
   description: "A generic operation",
   enabled: true,

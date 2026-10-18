@@ -24,6 +24,7 @@ export function snapshotFromStatus(status, { workerId, sequence, generatedAt = n
     services: (status.services || []).map((service) => ({
       id: service.id,
       ...(typeof service.workspace === "string" ? { workspace: service.workspace } : {}),
+      ...(service.presentation === "schedule-control" ? { presentation: service.presentation } : {}),
       label: service.label,
       status: service.online ? "ONLINE" : "OFFLINE",
       managed: Boolean(service.managed),
@@ -45,6 +46,7 @@ export function snapshotFromStatus(status, { workerId, sequence, generatedAt = n
     operations: (status.operations || []).map((operation) => ({
       id: operation.id,
       ...(typeof operation.workspace === "string" ? { workspace: operation.workspace } : {}),
+      ...(operation.presentation === "inline-action" ? { presentation: operation.presentation } : {}),
       label: operation.label,
       ...(typeof operation.group === "string" ? { group: operation.group } : {}),
       ...(typeof operation.description === "string" ? { description: operation.description } : {}),

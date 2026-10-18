@@ -191,6 +191,7 @@ export function buildRegistry(env = process.env, config = null) {
       {
         id: "aksignal-scheduler",
         workspace: "aksignal",
+        presentation: "schedule-control",
         label: "AKsignal Scheduler",
         group: "AKSIGNAL",
         summary: "独立 08:30 调度；错过或失败后等待面板手动运行",
@@ -218,6 +219,14 @@ export function buildRegistry(env = process.env, config = null) {
           artifactRoot: join(aksignalRoot, ".run_day/runs") },
         run: { command: join(aksignalRoot, ".venv/bin/python"),
           args: ["-m", "src.daily_schedule", "--manual-run"], cwd: aksignalRoot },
+      },
+      {
+        id: "aksignal-comparison-update", workspace: "aksignal", presentation: "inline-action",
+        label: "更新 Compare", group: "AKSIGNAL",
+        description: "手动刷新独立篮子研究快照；失败时保留最近一次有效结果。",
+        enabled: true, cancellationSupported: false, timeoutMs: 900000,
+        run: { command: join(aksignalRoot, ".venv/bin/python"),
+          args: ["-m", "src.research.baskets.hub_update"], cwd: aksignalRoot },
       },
       ...(env.MASHANG_CONTENT_ENABLED === '1' ? [{ id: 'notes-flomo', workspace: 'publish', label: '同步 Flomo', enabled: true, requiresSnapshot: true, cancellationSupported: false, timeoutMs: 60000 }] : []),
       ...((env.MASHANG_PUBLISH_SERVICE_URL || env.MASHANG_PUBLISH_DIRECT === '1') ? [{ id: 'text-publication', workspace: 'publish', label: '微博文本发布', description: '审阅不可变正文后明确授权；结果不确定时只核验。', enabled: true, requiresSnapshot: true, cancellationSupported: false, timeoutMs: 60000 }] : []),

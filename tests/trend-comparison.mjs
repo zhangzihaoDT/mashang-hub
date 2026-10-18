@@ -11,4 +11,10 @@ assert.equal(operationDetails({trendComparison:{...value.trendComparison,dates:[
 const invalid=operationDetails({trendComparison:{...value.trendComparison,series:[{values:[100,Infinity,NaN]}]}}).trendComparison;
 assert.deepEqual(invalid.series[0].values,[100,null,null]);
 assert.equal(trendComparison(null),'');
+const actionHtml=trendComparison(clean,[],{id:'opaque-update',label:'更新研究快照',enabled:true,lastRun:{status:'FAILED'}},true);
+assert.match(actionHtml,/data-target="opaque-update"/);assert.match(actionHtml,/重试更新/);assert.match(actionHtml,/保留截至/);
+assert.match(trendComparison(clean,[],{id:'opaque-update',enabled:true,lastRun:{status:'AWAITING_PERMISSION'}},true,{controlId:'control-1',status:'AWAITING_PERMISSION'}),/data-decision="approve"/);
+assert.equal(trendComparison(clean,[],{id:'opaque-update',enabled:true,lastRun:{status:'RUNNING'}},true).includes('disabled'),true);
+assert.match(trendComparison(clean,[],{id:'opaque-update',enabled:true,lastRun:{status:'AWAITING_PERMISSION'}},true),/等待确认/);
+assert.match(trendComparison(null,[],{id:'opaque-update',label:'生成研究快照',enabled:true,lastRun:{status:'IDLE'}},true),/尚无可核验/);
 console.log('Generic comparison: escaping, null gaps, bounded metadata and dates passed');

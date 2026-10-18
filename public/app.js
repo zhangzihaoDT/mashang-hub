@@ -13,7 +13,8 @@ const initialState = { session: null, connected: false, status: "IDLE", workerSt
 let state = initialState;
 const conversations = { service: state, publish: null, aksignal: null };
 let currentWorkspace = 'service';
-let marketComposerCollapsed = localStorage.getItem('aksignal-composer-collapsed') === '1';
+const marketComposerPreference = localStorage.getItem('aksignal-composer-collapsed');
+let marketComposerCollapsed = marketComposerPreference === null ? true : marketComposerPreference === '1';
 let submitting = false;
 let runtimeSnapshot = null;
 const workspaceCopy = {

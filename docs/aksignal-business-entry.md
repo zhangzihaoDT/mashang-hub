@@ -56,7 +56,7 @@ The user explicitly authorized sending the selected formal report, trade date, r
 
 Unit, workspace, DOM and actual Hub/Worker/browser plus local mock-model integration passed, including chosen model, full quality evidence, tool denial and completed response. No developer-selected external model request was made. The isolated local preview now uses the existing local model service for user-selected sends; production remains unchanged.
 
-## Market Snapshot v1
+## Market Snapshot v2
 
 首条样本展示已替换为 AKsignal 只读生成的结构化市场状态摘要。三栏：市场状态（宽基方向、行业阶段广度、ETF 活跃度）；关注方向（已发布强势方向，至少两个行业支撑，按活跃行业数、参与比例、强度和稳定名称排序，不展示股票榜）；重要变化（只比较官方日历上一交易日已核验正式发布，在共同样本、相同来源/状态口径内统计新增/退出趋势与活跃度变化）。底部仅汇总可靠完整360日窗口已有变化，未知/不足排除；低位不视为买入信号。没有上一期正式事实时明确不可比，不借用任意历史缓存。
 
@@ -64,6 +64,14 @@ Unit, workspace, DOM and actual Hub/Worker/browser plus local mock-model integra
 
 ## Snapshot 可视化
 
-三栏信息逻辑不变，图形替换重复数值文字：市场状态用 ETF 活跃数/比例、20个官方交易日走势；关注方向用124行业格子，切换 RPS15、所属一级行业活跃比例、上一交易日同源可比 RPS15 差值；重要变化用行业状态分布条替代16/9/9/90文字清单，并保留状态变更简述。颜色仅表达事实强弱或变化，不表示买卖。未知格子有斜纹；行业全名与数值支持键盘焦点/点选查看。热力格子按一级行业/行业代码固定顺序，跨日不随排名跳动。
+三栏信息逻辑不变，图形替换重复数值文字：市场状态用 ETF 活跃数/比例及官方交易日走势；关注方向用行业格子，切换 RPS15、所属一级行业活跃比例、上一交易日同源可比 RPS15 差值；重要变化用行业状态分布条表达本期状态，并保留状态变更简述。颜色仅表达事实强弱或变化，不表示买卖。未知格子有斜纹；行业全名与数值支持键盘焦点/点选查看。热力格子按一级行业/行业代码固定顺序，跨日不随排名跳动。
 
-历史仅用已核验正式批次；缺失交易日空白，不插值、不跨缺失或来源变化连线。每个点保留当期样本总数和 data_complete；delta 使用同源共同样本，口径解释折叠。当前20个交易日只有两期正式历史，界面明确显示2日已发布；没有制造20日完整走势。状态分布是本期分布，不冒充跨日迁移。无新图表依赖。
+历史仅用已核验正式批次；缺失交易日空白，不插值、不跨缺失或来源变化连线。每个点保留当期样本总数和 data_complete；delta 使用同源共同样本，口径解释折叠。无新图表依赖。
+
+## Research-first UI refresh (local preview)
+
+AKsignal 主区优先展示 Market Facts 摘要与核心图表；完整日报和完整 Compare 报告作为按需附件入口。Compare 使用独立研究快照，不随 Daily 自动刷新；用户在图表区手动触发，Worker 调用 AKsignal 的 `python -m src.research.baskets.hub_update`，仅在来源快照、计算和报告全部成功后更新 Compare 指针，失败保留最近有效快照。
+
+日报发布、Daily 运行、正式数据质量彼此独立：正式日报区域绑定最近已核验发布和其质量提示；底部状态条表达当前目标任务；运行控制模态框（桌面约 700px 宽、手机近全屏居中，内容内部滚动）只含当前任务、自动调度、折叠诊断三部分。诊断内含有界、去路径化的最近日志尾部。Hub 不把一次失败显示成整个 AKsignal 不可用。此版目前为本地预览，尚未推送或部署 Docker 镜像。
+
+本轮仅调整 Hub 运行控制的呈现，不改 Worker / AKsignal 业务逻辑；保留原生 dialog 的打开、审批自动打开和关闭行为。

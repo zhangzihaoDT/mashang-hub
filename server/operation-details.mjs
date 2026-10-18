@@ -8,6 +8,8 @@ export function operationDetails(value) {
   for (const key of ['elapsedSeconds', 'completedSteps', 'totalSteps']) if (Number.isFinite(value[key]) && value[key] >= 0) d[key] = value[key];
   if (typeof value.timezone === 'string') { try { new Intl.DateTimeFormat('en', {timeZone:value.timezone}).format(); d.timezone=value.timezone; } catch {} }
   if (Array.isArray(value.metrics)) d.metrics = value.metrics.slice(0, 32).map(m=>({label:str(m.label,200),value:str(m.value,200)}));
+  if (Array.isArray(value.logLines)) d.logLines = value.logLines.slice(-20)
+    .filter(x => typeof x === 'string').map(x => str(x,500).replace(/(?<!\w)\/(?:Users|private|tmp|var|home|opt|Volumes)\/[^\s；，]+/g, '[local log]'));
   if (value.schedule && typeof value.schedule === 'object') {
     const s = value.schedule;
     d.schedule = {
