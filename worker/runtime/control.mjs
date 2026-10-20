@@ -62,8 +62,12 @@ async function spawnDetached(spec, logFile) {
       detached: true,
       stdio: ["ignore", fd, fd],
     });
+    const monitor = { child, failure: null };
+    child.on("error", error => { monitor.failure = { code: null, error: error.message }; });
+    child.on("exit", (code, signal) => { monitor.failure = { code, signal }; });
+    await new Promise(resolve => { child.once("spawn", resolve); child.once("error", resolve); });
     child.unref();
-    return child.pid;
+    return monitor;
   } finally {
     closeSync(fd);
   }
@@ -114,12 +118,14 @@ function probeOptions(registry) {
   return { timeoutMs: registry.probeTimeoutMs, stateDir: registry.runtimeDir };
 }
 
-async function waitForService(service, registry, predicate, timeoutMs, signal) {
+async function waitForService(service, registry, predicate, timeoutMs, signal, monitor) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
     if (signal?.aborted) return { aborted: true };
+    if (monitor?.failure) return { startFailure: monitor.failure };
     last = await probeService(service, probeOptions(registry));
+    if (monitor?.failure) return { startFailure: monitor.failure };
     if (predicate(last)) return last;
     await sleep(400);
   }
@@ -153,9 +159,12 @@ export async function up(service, registry, { log = console, signal } = {}) {
   if (!start) throw new Error(`service '${service.id}' has no start control declared in the registry`);
 
   let record = null;
+  let monitor = null;
   if (start.detach) {
     const logFile = start.logFile || join(stateDir, `${service.id}.log`);
-    const pid = await spawnDetached(start, logFile);
+    monitor = await spawnDetached(start, logFile);
+    if (monitor.failure) return { status: "start-failed", ...monitor.failure, before };
+    const pid = monitor.child.pid;
     record = {
       id: service.id,
       pid,
@@ -175,8 +184,14 @@ export async function up(service, registry, { log = console, signal } = {}) {
     if (result.code !== 0) return { status: "start-failed", code: result.code, error: result.error, before };
   }
 
-  const after = await waitForService(service, registry, (state) => state.online, registry.verifyMs, signal);
+  const after = await waitForService(service, registry, (state) => state.online, registry.verifyMs, signal, monitor);
   if (after?.aborted || signal?.aborted) return { status: "cancelled", record, before };
+  const failure = after?.startFailure || monitor?.failure;
+  if (failure) {
+    log.warn(`service ${service.id} exited before verification: ${failure.error || failure.signal || failure.code}`);
+    await clearManaged(stateDir, service.id);
+    return { status: "start-failed", ...failure, record, before };
+  }
   if (!after) return { status: "unverified", record, before };
 
   if (record) await writeManaged(stateDir, service.id, { ...record, verifiedPid: after.pid ?? null });
