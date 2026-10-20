@@ -35,7 +35,7 @@ const directPublication = process.env.MASHANG_PUBLISH_DIRECT === '1';
 if (directPublication && process.env.MASHANG_PUBLISH_SERVICE_URL) throw Error('PUBLISH_MODES_CONFLICT');
 const publicationLedger = process.env.MASHANG_PUBLISH_LEDGER_DIR || `${homedir()}/.mashang-hub/publication-ledger`;
 const publishRoot = process.env.MASHANG_CONTENT_ROOT || process.env.MASHANG_PUBLISH_ROOT || join(homedir(), 'Documents/github/content');
-const notesOperation = process.env.MASHANG_CONTENT_ENABLED === '1' ? await createNotesOperation({ root: publishRoot, dataDirectory: process.env.MASHANG_CONTENT_DATA_DIR || join(publishRoot, 'data'), notesDirectory: process.env.MASHANG_CONTENT_NOTES_DIR || join(publishRoot, 'notes/entries'), directory: process.env.MASHANG_CONTENT_STATE_DIR || `${stateFile}.content`, publicKey: await readFile(process.env.MASHANG_CONTENT_PUBLIC_KEY_FILE || process.env.MASHANG_PUBLISH_PUBLIC_KEY_FILE, 'utf8') }) : null;
+const notesOperation = process.env.MASHANG_CONTENT_ENABLED === '1' ? await createNotesOperation({ root: publishRoot, dataDirectory: process.env.MASHANG_CONTENT_DATA_DIR || join(publishRoot, 'data'), notesDirectory: process.env.MASHANG_CONTENT_NOTES_DIR || join(publishRoot, '../mashang-knbase/library/notes'), directory: process.env.MASHANG_CONTENT_STATE_DIR || `${stateFile}.content`, publicKey: await readFile(process.env.MASHANG_CONTENT_PUBLIC_KEY_FILE || process.env.MASHANG_PUBLISH_PUBLIC_KEY_FILE, 'utf8') }) : null;
 const directExecutor = directPublication ? new PublicationService({
   directory: publicationLedger,
   publicKey: await readFile(process.env.MASHANG_PUBLISH_PUBLIC_KEY_FILE, 'utf8'),

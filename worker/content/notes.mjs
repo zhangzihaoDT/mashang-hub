@@ -16,7 +16,7 @@ export function noteIntent(prompt) {
   return { sync: /flomo/i.test(command) && !previewOnly, save: /(?:记下来|记一下|保存|存到|存本地)/.test(command) && !/(?:只整理|仅整理|不(?:要)?保存|不(?:要)?存)/.test(command), raw: /原样/.test(command) };
 
 }
-export async function createNotesOperation({ root, dataDirectory = join(root, 'data'), notesDirectory = join(root, 'notes/entries'), directory, publicKey, run }) {
+export async function createNotesOperation({ root, dataDirectory = join(root, 'data'), notesDirectory = join(root, '../mashang-knbase/library/notes'), directory, publicKey, run }) {
   const [{ Storage }, { notes, validateNote }] = await Promise.all(['storage.mjs', 'notes.mjs'].map(name => import(pathToFileURL(join(root, 'src', name)).href)));
   const storage = new Storage(dataDirectory, undefined, { notesRoot: notesDirectory });
   const state = new Storage(directory);
