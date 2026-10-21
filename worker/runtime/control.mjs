@@ -3,7 +3,7 @@ import { closeSync, openSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { probeService } from "./status.mjs";
-import { findProcesses, isPidAlive } from "./probes.mjs";
+import { findProcesses, isGroupAlive, isPidAlive } from "./probes.mjs";
 import { writeManualJob, writeManualOperation } from "./jobs.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -74,6 +74,7 @@ async function spawnDetached(spec, logFile) {
 }
 
 async function terminate(pid, { group, signal = "SIGTERM", timeoutMs = 8000 }) {
+  const alive = () => group ? isGroupAlive(pid) : isPidAlive(pid);
   const send = (sig) => {
     try {
       process.kill(group ? -pid : pid, sig);
@@ -84,12 +85,12 @@ async function terminate(pid, { group, signal = "SIGTERM", timeoutMs = 8000 }) {
   send(signal);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!(await isPidAlive(pid))) return true;
+    if (!(await alive())) return true;
     await sleep(200);
   }
   send("SIGKILL");
   await sleep(300);
-  return !(await isPidAlive(pid));
+  return !(await alive());
 }
 
 async function readManaged(stateDir, id) {

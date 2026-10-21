@@ -122,6 +122,7 @@ assert.equal(knbase.openUrl, "http://127.0.0.1:4317");
 assert.ok(knbase.control.start.cwd.endsWith("Documents/github/mashang-knbase"));
 assert.deepEqual(knbase.control.start.args, ["start"]);
 assert.equal(knbase.control.start.env.PORT, "4317");
+assert.equal(knbase.control.start.env.KNBASE_RECOVER_STALE_LOCK, "1");
 assert.ok(new RegExp(knbase.match).test("node server/main.mjs"));
 assert.ok(!new RegExp(knbase.match).test("node server/index.js"));
 assert.ok(!new RegExp(knbase.match).test("node server/main.mjs --root /tmp/trial --port 4318"));

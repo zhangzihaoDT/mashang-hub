@@ -19,6 +19,16 @@ export async function isPidAlive(pid) {
   }
 }
 
+export async function isGroupAlive(pgid) {
+  if (!Number.isInteger(pgid) || pgid <= 0) return false;
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
 /** Return every process whose full command matches `pattern`.
  * Uses `ps` rather than `pgrep`: pgrep omits the calling process, which would
  * make the Worker unable to detect its own process.

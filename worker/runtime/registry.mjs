@@ -161,7 +161,7 @@ export function buildRegistry(env = process.env, config = null) {
         match: "node(?: .*?)? server/main\\.mjs$",
         logs: [],
         control: {
-          start: { command: "npm", args: ["start"], cwd: myknbaseRoot, detach: true, env: { PORT: String(myknbasePort) } },
+          start: { command: "npm", args: ["start"], cwd: myknbaseRoot, detach: true, env: { PORT: String(myknbasePort), KNBASE_RECOVER_STALE_LOCK: "1" } },
           stop: { signal: "SIGTERM", timeoutMs: stopTimeoutMs },
         },
       },
