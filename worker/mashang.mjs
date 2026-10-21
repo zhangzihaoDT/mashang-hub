@@ -6,9 +6,10 @@ import { renderText } from "./runtime/render.mjs";
 import { listLogSources, readTail, followFile } from "./runtime/logs.mjs";
 import { up, down, restart, run, runOperation, findService, findJob, findOperation } from "./runtime/control.mjs";
 
-const USAGE = `mashang — local runtime manager
+const USAGE = `mashang — Hub client and local runtime manager
 
 Usage:
+  mashang content <notes|flomo> [--hub URL]
   mashang status [--json] [--strict]
   mashang up <service>
   mashang down <service>
@@ -236,6 +237,10 @@ async function commandLogs(rawArgs, env) {
 
 async function main() {
   const [command = "help", ...args] = process.argv.slice(2);
+  if (command === 'content') {
+    try { return await (await import('../cli/content.mjs')).runContent(args); }
+    catch (error) { process.stderr.write(`Content: ${error.message}\n`); process.exitCode = 1; return; }
+  }
   if (command === "status") return commandStatus(args, process.env);
   if (command === "up" || command === "down" || command === "restart" || command === "run") return commandControl(command, args, process.env);
   if (command === "logs") return commandLogs(args, process.env);

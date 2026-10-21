@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import { hubURL } from '../cli/hub-client.mjs';
+import { terminalText, parseContentArgs, noteTitle, createPasteParser } from '../cli/content.mjs';
+import { readTaskResult } from '../worker/task-result.mjs';
+import { selectAvailableModel } from '../public/model-selection.js';
+
+const models = [
+  { key:'luna', available:true, providerID:'opencode-go', modelID:'gpt-5.6-luna' },
+  { key:'deepseek', available:true, providerID:'deepseek', modelID:'deepseek-flash' },
+];
+assert.equal(selectAvailableModel(models), models[1], 'CLI and Web must use the same explicit default');
+assert.equal(selectAvailableModel(models, { providerID:'opencode-go', modelID:'gpt-5.6-luna' }), models[0]);
+assert.equal(selectAvailableModel(models, { providerID:'retired', modelID:'old' }), models[1]);
+assert.equal(selectAvailableModel(models.map(model => ({ ...model, available:false }))), null);
+
+assert.equal(hubURL('wss://hub.example.test'), 'https://hub.example.test');
+assert.equal(hubURL('http://127.0.0.1:3000'), 'http://127.0.0.1:3000');
+for (const url of ['http://remote.example.test', 'https://user:secret@hub.example.test', 'https://hub.example.test/path', 'https://hub.example.test?token=secret', 'file:///tmp/test']) assert.throws(() => hubURL(url));
+assert.equal(terminalText('\x1b[31m正文\x1b[0m\x1b]52;c;attack\x07\r\u202e\n下一行'), '正文\n下一行');
+assert.deepEqual(parseContentArgs(['notes']), { positional:['notes'], target:'notes' });
+assert.equal(parseContentArgs(['flomo', '--hub', 'https://hub.example.test']).target, 'flomo');
+assert.equal(parseContentArgs([]).target, null, 'no target only shows usage');
+assert.throws(() => parseContentArgs(['publish']), /notes 或 flomo/);
+assert.throws(() => parseContentArgs(['notes', 'extra']), /未知参数/);
+assert.throws(() => parseContentArgs(['notes', '--new']), /未知或缺少参数/, 'session control is not exposed');
+assert.throws(() => parseContentArgs(['notes', '--model', 'provider/model']), /未知或缺少参数/, 'model config is not exposed');
+assert.equal(noteTitle({ contentCard:{ title:'标题' }, text:'正文' }), '标题');
+assert.equal(noteTitle({ text:'**回退标题**\n正文' }), '回退标题');
+assert.equal(noteTitle(null, '原文第一行'), '原文第一行');
+const typed = [], pasted = [];
+let starts = 0;
+const parser = createPasteParser({ onStart: () => starts++, onData: text => typed.push(text), onPaste: text => pasted.push(text) });
+parser.write('before');
+parser.write('\x1b[20');
+parser.write('0~第一行\n第二行\n');
+parser.write('第三行\x1b[201~after');
+assert.deepEqual(typed, ['before', 'after'], 'text outside paste boundaries is passed through');
+assert.deepEqual(pasted, ['第一行\n第二行\n第三行'], 'the entire paste is captured once, even across chunks');
+assert.equal(starts, 1);
+const request = { taskId:'task', sessionId:'session', attemptId:'attempt', dispatchId:'dispatch' };
+const entry = { ...request, executor:'agent', events:[{ type:'agent.message.completed', text:'durable result', contentCard:null, operationPreview:{ private:'must not escape' } }] };
+const journal = { entries:{ task:entry } }, original = JSON.stringify(journal);
+assert.deepEqual(readTaskResult(journal, request), { text:'durable result', plainText:false, contentCard:null });
+for (const field of ['taskId','sessionId','attemptId','dispatchId']) assert.equal(readTaskResult(journal, { ...request, [field]:'wrong' }), null);
+assert.equal(JSON.stringify(journal), original, 'reading a result must never mutate execution evidence');
+console.log('Content CLI: secure Hub URL, target parsing, title extraction, terminal escape filtering, identity-bound read-only result retrieval passed');

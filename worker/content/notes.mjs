@@ -82,7 +82,7 @@ export async function createNotesOperation({ root, dataDirectory = join(root, 'd
         previous = latest ? await readSnapshot(latest.ref) : null;
         const colon = /[：:\n]([\s\S]+)$/.exec(task.prompt);
         const source = colon?.[1] || (/(?:刚才|之前|以上).*讨论/.test(task.prompt) ? context || previous?.final_note : previous?.final_note || context);
-        if (!source?.trim()) return { text: '请粘贴要整理的内容，或先在当前对话中讨论。' };
+        if (!source?.trim()) return { text: '请粘贴要整理的内容。' };
         const original = source;
         const reuse = !colon && previous && /^(?:请|直接|把这条笔记|把这段内容|将这段内容|保存|同步|发到|到|和|并|本地|flomo|\s|。|，)+$/i.test(task.prompt);
         const final = intent.raw ? original : reuse ? previous.final_note : await generate({ original, prompt: task.prompt, flomo: intent.sync, signal });

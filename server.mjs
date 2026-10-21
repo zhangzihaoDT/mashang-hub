@@ -90,6 +90,7 @@ function finalizeTask(task, { event, status, reason, error }) {
   task.updatedAt = Date.now();
   clearTaskTimers(task);
   task.reason = reason || null;
+  task.error = error || null;
   persistTask(task);
   const elapsedMs = task.updatedAt - task.createdAt;
   finalizeTurn(task.taskId, { event, status, reason, elapsedMs });
@@ -601,6 +602,26 @@ const server = createServer(async (req, res) => {
     if (!card || card.digest !== task.resultPreview.digest) return json(res, 409, { error: 'Content unavailable' });
     return json(res, 200, { text: preview.text, contentCard: card });
   }
+  const taskResult = url.pathname.match(/^\/api\/tasks\/([^/]+)\/result$/);
+  if (taskResult && req.method === 'GET') {
+    const task = taskStore.get(taskResult[1]);
+    if (!task || task.source !== 'conversation') return json(res, 404, { error: 'Task not found' });
+    if (activeWorker?.workerId !== task.workerId) return json(res, 503, { error: 'Result owner Worker is offline' });
+    const requestId = randomUUID();
+    const response = await new Promise(resolve => {
+      const timer = setTimeout(() => { pendingArtifacts.delete(requestId); resolve(null); }, 10000);
+      pendingArtifacts.set(requestId, { resolve: value => { clearTimeout(timer); resolve(value); } });
+      if (!sendWorker({ type: 'task.result.request', requestId, taskId: task.taskId, sessionId: task.conversationId,
+        attemptId: task.attemptId, dispatchId: task.dispatchId })) {
+        clearTimeout(timer); pendingArtifacts.delete(requestId); resolve(null);
+      }
+    });
+    const result = response?.result;
+    if (response?.taskId !== task.taskId || typeof result?.text !== 'string' || result.text.length > 1000000)
+      return json(res, 409, { error: 'Result unavailable; execution was not repeated' });
+    // Body remains in the Worker's durable outbox, never in the Hub database.
+    return json(res, 200, { text: result.text, plainText: result.plainText === true, contentCard: contentCard(result.contentCard) }, { 'cache-control': 'no-store' });
+  }
   const controlGet = url.pathname.match(/^\/api\/runtime\/controls\/([^/]+)$/);
   if (controlGet && req.method === "GET") { const control = controls.get(controlGet[1]); return control ? json(res, 200, publicControl(control)) : json(res, 404, { error: "Control not found" }); }
   if (url.pathname === '/api/permissions' && req.method === 'GET') return json(res, 200, [...pendingPermissions.values()]);
@@ -645,6 +666,7 @@ const server = createServer(async (req, res) => {
     const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, attemptId: task.attemptId, dispatchId: task.dispatchId, policy: task.policy, sessionId: session.id, turnId, contentAction: input.contentAction && (input.contentAction.ref === undefined || /^[a-f0-9-]{36}$/.test(input.contentAction.ref)) && /^[a-z][a-z-]{0,30}$/.test(input.contentAction.action) ? { ...(input.contentAction.ref ? { ref: input.contentAction.ref } : {}), action: input.contentAction.action } : null, marketArtifactId: /^runtime_[a-f0-9]{64}$/.test(input.marketArtifactId || "") ? input.marketArtifactId : null, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
     if (!dispatched) { console.log(`task dispatch failed: ${task.taskId} session=${session.id}`); finalizeTask(task, { event: "task.failed", status: "FAILED", reason: REASONS.OPENCODE_ERROR, error: "Mac Worker is offline" }); return json(res, 503, { error: "Mac Worker is offline", taskId: task.taskId }); }
     console.log(`task dispatched to worker: ${task.taskId} session=${session.id} worker=${activeWorker.workerId}`);
+    broadcast({ type: 'task.created', ...publicTask(task) });
     return json(res, 202, publicTask(task));
   }
   if (url.pathname === '/api/tasks' && req.method === 'GET') return json(res, 200, taskStore.list());

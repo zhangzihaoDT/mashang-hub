@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { generateKeyPairSync } from 'node:crypto';
@@ -97,6 +97,7 @@ try {
   assert.equal((await decision()).status, 409); assert.equal((await calls()).length, 2);
   assert.equal((await api(`/api/runtime/controls/${timeout.controlId}`)).data.status, 'UNKNOWN');
   assert.equal((await api(`/api/tasks/${saved.task.taskId}/preview`)).data.contentCard.notice, '已保存到本地');
+  assert.equal((await api(`/api/tasks/${saved.task.taskId}/result`)).data.contentCard.notice, '已保存到本地', 'generic result survives Hub and Worker restart without execution');
   const interruptedSession = await session();
   const interrupted = await api(`/api/sessions/${interruptedSession.id}/message`, { workspaceId: 'publish', parts: [{ type: 'text', text: '保存到本地：中断合成 #测试' }] });
   await until(async () => JSON.parse(await readFile(join(temp, 'worker.json.executions.json'), 'utf8'))[interrupted.data.taskId]?.contentGeneration);
@@ -146,6 +147,30 @@ try {
   assert.equal(generation, countBeforeSpacing, 'list whitespace needs no model retry');
   assert.equal((await latestControl(spacedSession)).status, 'PENDING_APPROVAL');
   assert.equal((await calls()).length, 3, 'format preparation cannot send externally');
+  if (process.env.CONTENT_CLI === '1') {
+    if (process.env.CONTENT_BROWSER === '1') {
+      const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
+      browser = await chromium.launch({ headless:true, ...(process.env.CHROME_BIN ? { executablePath:process.env.CHROME_BIN } : {}) });
+    }
+    const { verifyContentCLI } = await import('./content-cli-flow.mjs');
+    await verifyContentCLI({ base, temp, entries, api, until, browser });
+    await browser?.close(); browser = null;
+    // Simulate the deployed Hub before /result existed, keeping its real SSE
+    // and note preview endpoints. This must still complete the Notes workflow.
+    const legacy = createServer((req, res) => {
+      if (req.headers.cookie && /^\/api\/tasks\/[^/]+\/result$/.test(req.url)) {
+        res.writeHead(404, { 'content-type':'application/json' }); res.end('{"error":"Not found"}'); return;
+      }
+      const upstream = httpRequest(new URL(req.url, base), { method:req.method, headers:req.headers }, reply => {
+        res.writeHead(reply.statusCode, reply.headers); reply.pipe(res);
+      });
+      req.pipe(upstream); res.on('close', () => upstream.destroy()); upstream.on('error', () => res.destroy());
+    });
+    await new Promise(resolve => legacy.listen(0, '127.0.0.1', resolve));
+    try { await verifyContentCLI({ base:`http://127.0.0.1:${legacy.address().port}`, temp:join(temp,'legacy'), entries, api, until }); }
+    finally { legacy.closeAllConnections(); await new Promise(resolve => legacy.close(resolve)); }
+    console.log('Legacy Hub without /result: SSE discussion, note save and preview recovery passed');
+  }
   console.log('Content real Hub → Worker → Content APIs with mock model/webhook: local save, exact approval, edit invalidation, cross-session denial, duplicate clicks, timeout, restart, scoped direct grant and recovery passed');
   if (process.env.CONTENT_BROWSER === '1') {
     const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');

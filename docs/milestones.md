@@ -278,3 +278,27 @@ docker.io/byte1717712/mashang-hub:latest
 ```
 
 镜像目标平台 `linux/amd64`，Sealos 正式环境指向该镜像。
+
+## 2026-10-21 · V0.6 Content CLI
+
+### 目标驱动的 Content 记录入口稳定
+
+Content CLI 从「对话 + 手动指令」收敛为目标驱动的记录入口。用户选择 Notes 或 Flomo，输入已经产生的内容，系统自动完成整理、本地保存或 Flomo 同步。Content 不负责和用户讨论内容，只负责把内容变成可长期保存的知识资产。
+
+### 稳定行为
+
+- `mashang content notes` / `mashang content flomo` 两种启动方式。
+- 单行回车直接整理并保存/同步。
+- 多行粘贴通过 bracketed paste 识别完整开始/结束边界，内容累计。
+- 提示符内显示 `[pasted~Nlines]`，不打印正文预览。
+- 粘贴结束不自动保存，按 Enter 才提交整个粘贴块。
+- 失败时直接展示原因；按 Enter 重试或重新检查，不要求记忆命令。
+- `/paste` + `/end` 作为显式多行输入。
+- `/exit`、Ctrl+C、Ctrl+D 退出；退出不取消已提交记录。
+- 交互命令收敛为 `/paste`、`/end`、`/exit`；任务状态、恢复、幂等和模型选择保留在 Hub / Worker 后端。
+
+### 边界
+
+- Web 端 Content 能力保持不变。
+- Notes / Flomo 继续复用既有 Worker 业务工作流、受限授权、任务持久化与去重。
+- Content CLI 不新增内容存储，不扩展为通用 Hub 交互终端。

@@ -1,5 +1,6 @@
 import { ensureMappedSession } from './opencode-session.mjs';
 import { readNoteResponse, noteFailure } from './content/note-response.mjs';
+import { readTaskResult } from './task-result.mjs';
 import { createNotesOperation, NOTES_OPERATION } from './content/notes.mjs';
 import { marketDiscussionContext } from "./market-discussion.mjs";
 import { artifactCandidates, toolArtifacts } from "./task-artifacts.mjs";
@@ -416,6 +417,11 @@ async function readOperationPreview(message) {
   try { send({ type: 'artifact.response', requestId: message.requestId, ...await (message.targetId === NOTES_OPERATION || message.cardPreview ? notesOperation : publication).readPreview(message) }); }
   catch { send({ type: 'artifact.response', requestId: message.requestId, error: 'SNAPSHOT_UNAVAILABLE' }); }
 }
+function handleTaskResultRequest(message) {
+  const result = readTaskResult(journal, message);
+  send({ type: 'artifact.response', requestId: message.requestId, taskId: message.taskId,
+    ...(result ? { result } : { error: 'RESULT_UNAVAILABLE' }) });
+}
 async function sendReconciliation(requests) {
   for (const request of requests) if (request.policy) updateTaskPolicy({ ...request });
   if (publication || notesOperation) for (const request of requests) {
@@ -447,7 +453,7 @@ async function register() { runtimeSequence = 0; await permissions.sync(); await
 function connect() {
   const url = new URL(hubURL); url.protocol = url.protocol === "https:" ? "wss:" : "ws:"; url.pathname = "/worker";
   socket = new WebSocket(url, { headers: { Authorization: `Bearer ${workerSecret}` } });
-  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "worker.registered") console.log("Hub registration acknowledged"); else if (message.type === "operation.preview.request" && (publication || notesOperation)) readOperationPreview(message); else if (message.type === "worker.reconcile.request") sendReconciliation(message.tasks || []); else if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "task.policy.updated") updateTaskPolicy(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") handlePermissionReply(message); } catch { /* Keep worker alive on malformed control messages. */ } });
+  socket.on("open", register); socket.on("message", (data) => { try { const message = JSON.parse(data.toString()); if (message.type === "worker.registered") console.log("Hub registration acknowledged"); else if (message.type === "operation.preview.request" && (publication || notesOperation)) readOperationPreview(message); else if (message.type === "worker.reconcile.request") sendReconciliation(message.tasks || []); else if (message.type === "task.result.request") handleTaskResultRequest(message); else if (message.type === "task.create") handleTask(message); else if (message.type === "task.cancel") cancelTask(message); else if (message.type === "task.policy.updated") updateTaskPolicy(message); else if (message.type === "artifact.request") handleArtifactRequest(message); else if (message.type === "runtime.control.request") handleControlRequest(message); else if (message.type === "runtime.control.cancel") handleControlCancel(message); else if (message.type === "permission.reply") handlePermissionReply(message); } catch { /* Keep worker alive on malformed control messages. */ } });
   socket.on("close", () => setTimeout(connect, 2000)); socket.on("error", () => socket.close());
 }
 await loadMappings(); await recoverExecutions(); setInterval(heartbeat, heartbeatMs); setInterval(publishRuntimeSnapshot, runtimeSnapshotMs); connect();

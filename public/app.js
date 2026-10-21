@@ -1,4 +1,5 @@
 import { contentCardHTML, contentCopy } from './content-ui.js';
+import { selectAvailableModel } from './model-selection.js';
 import { transitionTaskState } from "./task-state.js";
 import { initRuntimeUI } from "./runtime-ui.js";
 
@@ -16,6 +17,9 @@ let currentWorkspace = 'service';
 const marketComposerPreference = localStorage.getItem('aksignal-composer-collapsed');
 let marketComposerCollapsed = marketComposerPreference === null ? true : marketComposerPreference === '1';
 let submitting = false;
+const linkedContentSession = new URLSearchParams(location.search).get('workspace') === 'publish'
+  ? new URLSearchParams(location.search).get('conversation') : null;
+let contentSyncing = false;
 let runtimeSnapshot = null;
 const workspaceCopy = {
   service: { title:'Service', eyebrow:'BUSINESS & RESEARCH', placeholder:'描述业务问题、研究主题或报告要求…', welcome:'今天，想研究什么？', description:'提出业务问题，查看分析结论、研究报告与附件。' },
@@ -220,7 +224,13 @@ function applyTaskEvent(taskId, type, label) {
   updateCancelVisibility();
   return true;
 }
-function renderSession() { $("#sessionMeta").textContent = state.session ? `当前对话 · ${state.selectedModel ? modelLabel(state.selectedModel) : "选择执行模型"}` : "正在创建对话…"; }
+function renderSession() {
+  $("#sessionMeta").textContent = state.session ? `当前对话 · ${state.selectedModel ? modelLabel(state.selectedModel) : "选择执行模型"}` : "正在创建对话…";
+  if (currentWorkspace === 'publish' && state.session) {
+    const url = new URL(location.href); url.searchParams.set('workspace', 'publish'); url.searchParams.set('conversation', state.session.id);
+    history.replaceState(null, '', url);
+  }
+}
 function renderMessage(item) {
   if (item.role === "user") return `<div class="message user"><div class="label">任务描述</div><div class="bubble">${escapeHTML(item.text)}</div></div>`;
   if (item.kind === 'result' && item.contentCard) return `<article class="history-result">${contentCardHTML(item.contentCard, true)}</article>`;
@@ -331,7 +341,7 @@ function modelLabel(model) { return model?.label || model?.actualName || model?.
 function renderModelOptions(models) {
   const select = $("#modelSelect");
   select.innerHTML = models.map((model) => `<option value="${escapeHTML(model.key)}" ${model.available ? "" : "disabled"}>${escapeHTML(model.label)}${model.available ? "" : " unavailable"}</option>`).join("");
-  const defaultModel = models.find(model => model.key === state.selectedModel?.key && model.available) || models.find((model) => model.key === "deepseek" && model.available) || models.find(model => model.available);
+  const defaultModel = selectAvailableModel(models, state.selectedModel);
   if (defaultModel) { select.value = defaultModel.key; state.selectedModel = defaultModel.available ? defaultModel : null; }
   else { select.value = ""; state.selectedModel = null; }
   select.disabled = false;
@@ -352,8 +362,9 @@ function ensureSession() {
 }
 async function restoreSession(context) {
   const sessions = await api("/api/sessions");
-  const savedID = localStorage.getItem(sessionStorageKey(context));
+  const savedID = context === conversations.publish && linkedContentSession ? linkedContentSession : localStorage.getItem(sessionStorageKey(context));
   context.session = sessions.find?.((item) => item.id === savedID);
+  if (context === conversations.publish && linkedContentSession && !context.session) throw new Error('链接中的 Content 会话不存在，请检查 Hub 地址。');
   if (!context.session) context.session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ title: "mashang-hub" }) });
   localStorage.setItem(sessionStorageKey(context), context.session.id);
   if (state === context) { renderSession(); renderDebug(); }
@@ -385,6 +396,38 @@ async function restoreSession(context) {
   }
   if (latest) { context.artifacts = (await api(`/api/tasks/${encodeURIComponent(latest.taskId)}/artifacts`)).map(a => ({...a, preview:''})); if (state === context) renderArtifacts(); }
   for (const permission of await api('/api/permissions')) if (permission.taskId === context.activeTaskId) handleServerEvent(permission);
+  if (context === conversations.publish) await syncContentConversation();
+}
+// Content clients share task identity. Polling repairs missed SSE events without
+// replaying prompts or storing note bodies in the browser as authoritative state.
+async function syncContentConversation() {
+  const context = conversations.publish;
+  if (!context?.session || contentSyncing || submitting) return;
+  contentSyncing = true;
+  const sessionId = context.session.id;
+  const revision = context.syncRevision || 0;
+  try {
+    const latest = (await api('/api/tasks')).find(task => task.source === 'conversation' && task.conversationId === sessionId && task.workspaceId === 'publish');
+    if (!latest) return;
+    const result = latest.hasText && context.loadedResultTaskId !== latest.taskId ? await api(`/api/tasks/${encodeURIComponent(latest.taskId)}/result`) : null;
+    const control = (await api('/api/runtime/controls')).filter(item => item.conversationId === sessionId && item.originTaskId === latest.taskId).sort((a,b) => b.createdAt - a.createdAt)[0];
+    const preview = control?.status === 'PENDING_APPROVAL' && context.reviewedDigest !== control.digest
+      ? await api(`/api/runtime/controls/${encodeURIComponent(control.controlId)}/preview`) : null;
+    if (context.session?.id !== sessionId || submitting || (context.syncRevision || 0) !== revision) return;
+    if (context.activeTaskId !== latest.taskId) {
+      if (context.assistantText) context.messages.push({ role:'assistant', kind:'result', text:context.assistantText, contentCard:context.contentCard, status:context.taskState, title:context.taskTitle, artifacts:context.artifacts });
+      Object.assign(context, { activeTaskId:latest.taskId, turnId:latest.turnId, assistantText:'', contentCard:null, pendingContentAction:null, operationControl:null, reviewedDigest:null, artifacts:[], pendingPermission:null, permissionQueue:[], taskTitle:'Content', loadedResultTaskId:null });
+    }
+    context.taskState = latest.legacyStatus || latest.status;
+    context.status = context.taskState;
+    context.turnActive = ['CREATED','DISPATCHED','SUBMITTING','RUNNING'].includes(latest.status);
+    context.startedAt = latest.startedAt; context.finishedAt = latest.finishedAt;
+    if (result) { context.assistantText = result.text; context.contentCard = result.contentCard; context.resultPlainText = result.plainText; context.loadedResultTaskId = latest.taskId; }
+    if (control) context.operationControl = control;
+    if (preview) { context.assistantText = preview.text; context.contentCard = preview.contentCard; context.reviewedDigest = preview.digest; }
+    if (context === state) renderConversation();
+  } catch { /* The next snapshot can repair a missed result after reconnection. */ }
+  finally { contentSyncing = false; }
 }
 function parseMessage(data) { return (data?.parts || []).filter((part) => part.type === "text" && part.text).map((part) => part.text).join("\n"); }
 function actualModel(info) { const modelID = info?.modelID || info?.model?.id; const providerID = info?.providerID || info?.model?.providerID; const known = state.models?.find((model) => model.modelID === modelID && model.providerID === providerID); return { label: known ? modelLabel(known) : modelID ? `${providerID || ""}/${modelID}` : "Unknown model", modelID, providerID, cost: info?.cost, tokens: info?.tokens }; }
@@ -400,6 +443,7 @@ async function sendPrompt(text, publicationPreview = false, contentAction = null
   if (state.turnActive || submitting) return;
   if(state === conversations.aksignal && !bindMarket()) throw new Error("暂无可引用的正式日报");
   submitting = true;
+  state.syncRevision = (state.syncRevision || 0) + 1;
   if (state.activeTaskId) state.messages.push({ role:'assistant',kind:'result',text:state.assistantText,status:state.taskState,title:state.taskTitle,plainText:state.resultPlainText,contentCard:state.contentCard,artifacts:state.artifacts.map(item=>({...item})) });
   state.taskTitle = text.trim().slice(0, 48); state.resultPlainText = false; state.startedAt = Date.now(); state.finishedAt = null;
   state.messages.push({ role: "user", text });
@@ -444,6 +488,10 @@ function showPermission(request) {
   document.querySelector('.tool-permission')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 function handleServerEvent(event) {
+  const contentContext = conversations.publish;
+  if (contentContext && (event.taskId === contentContext.activeTaskId || event.sessionId === contentContext.session?.id || event.conversationId === contentContext.session?.id))
+    contentContext.syncRevision = (contentContext.syncRevision || 0) + 1;
+  if (event.type === 'task.created') { syncContentConversation(); return; }
   if (event.type === 'runtime.control.updated' && event.snapshotRef) {
     const context = Object.values(conversations).find(item => item?.session?.id === event.conversationId);
     if (context && (!event.originTaskId || !context.activeTaskId || context.activeTaskId === event.originTaskId) && (!context.operationControl || context.operationControl.controlId === event.controlId || event.status === 'PENDING_APPROVAL')) context.operationControl = event;
@@ -561,5 +609,6 @@ $('#newSession').addEventListener('click', async () => {
 
 optional("#debugToggle")?.addEventListener("click", () => optional("#debug")?.classList.toggle("hidden")); optional("#debugClose")?.addEventListener("click", () => optional("#debug")?.classList.add("hidden"));
 const runtimeUI = initRuntimeUI();
-async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); fetch("/api/runtime").then(response=>response.json()).then(data=>{ runtimeSnapshot = data.snapshot; updateSendAvailability(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); }).catch(()=>{}); renderMessages(); connectEvents(); }
+async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } if (linkedContentSession) switchWorkspace("publish"); setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); fetch("/api/runtime").then(response=>response.json()).then(data=>{ runtimeSnapshot = data.snapshot; updateSendAvailability(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); }).catch(()=>{}); renderMessages(); connectEvents(); }
 initialize();
+setInterval(() => { if (!document.hidden) syncContentConversation(); }, 4000);
