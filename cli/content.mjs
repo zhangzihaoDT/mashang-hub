@@ -49,6 +49,13 @@ export function noteTitle(result, original = '') {
 const PASTE_START = '\x1b[200~';
 const PASTE_END = '\x1b[201~';
 
+export function appendPending(existing, prefix, text) {
+  const normalized = String(text ?? '').replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+  const full = prefix ? (normalized ? `${prefix}\n${normalized}` : prefix) : normalized;
+  if (!full.trim()) return existing;
+  return existing ? `${existing}\n${full}` : full;
+}
+
 // Bracketed paste gives exact boundaries even when the terminal splits the
 // paste across data chunks. Text outside a paste is passed through untouched.
 export function createPasteParser({ onStart = () => {}, onData = () => {}, onPaste = () => {} } = {}) {
@@ -70,6 +77,10 @@ export function createPasteParser({ onStart = () => {}, onData = () => {}, onPas
           inPaste = false;
           const paste = buffer; buffer = '';
           onPaste(paste);
+          // Some terminals add a line break after the paste boundary. It is
+          // not a user Enter and must not submit the pending composition.
+          if (text.startsWith('\r\n')) text = text.slice(2);
+          else if (text.startsWith('\r') || text.startsWith('\n')) text = text.slice(1);
           continue;
         }
         const start = text.indexOf(PASTE_START);
@@ -169,11 +180,13 @@ export async function runContent(args, env = process.env) {
 
   const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   let rl, closed = false, paste = null, active = null, pendingPaste = null, pastePrefix = '';
+  let pendingLabels = [], ignoreEmptyUntil = 0;
   let retry = null, commandQueue = Promise.resolve(), eventsReady = false, resultEndpointMissing = false;
   const liveResults = new Map(), terminalErrors = new Map();
   function renderPrompt() {
     if (!tty || !rl || rl.closed) return;
-    rl.setPrompt(pendingPaste !== null ? `${target.prompt}${pasteMarker(pendingPaste)} ` : target.prompt);
+    const labels = pendingPaste !== null ? pendingLabels.join('') : '';
+    rl.setPrompt(labels ? `${target.prompt}${labels} ` : target.prompt);
     rl.prompt(true);
   }
   const say = value => {
@@ -396,8 +409,12 @@ export async function runContent(args, env = process.env) {
   async function processLine(line) {
     if (pendingPaste !== null) {
       if (line.trim() === '/exit') { rl.close(); return; }
+      // Some terminals emit a line break between bracketed paste chunks.
+      // Ignore that boundary newline, but keep a later deliberate Enter.
+      if (!line.trim() && Date.now() < ignoreEmptyUntil) { ignoreEmptyUntil = 0; return; }
+      ignoreEmptyUntil = 0;
       if (active) { say('上一笔仍在整理；粘贴内容已保留，完成后按 Enter 提交。'); return; }
-      const pasted = pendingPaste; pendingPaste = null;
+      const pasted = pendingPaste; pendingPaste = null; pendingLabels = [];
       resetPrompt();
       await submitContent(line.trim() ? `${pasted}\n${line}` : pasted);
       return;
@@ -434,15 +451,18 @@ export async function runContent(args, env = process.env) {
   const resetPrompt = renderPrompt;
   function finishPaste(text) {
     const prefix = pastePrefix; pastePrefix = '';
-    const normalized = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '');
-    const full = prefix ? (normalized ? `${prefix}\n${normalized}` : prefix) : normalized;
-    if (!full.trim()) return;
+    const normalized = String(text ?? '').replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+    const combined = appendPending(pendingPaste, prefix, text);
+    if (combined === pendingPaste) return;
     if (paste) {
-      paste.push(full);
-      say(pasteMarker(full));
+      paste.push(combined);
+      say(pasteMarker(combined));
       return;
     }
-    pendingPaste = pendingPaste ? `${pendingPaste}\n${full}` : full;
+    if (prefix) pendingLabels.push(terminalText(prefix));
+    if (normalized.trim()) pendingLabels.push(pasteMarker(normalized));
+    pendingPaste = combined;
+    ignoreEmptyUntil = Date.now() + 80;
     if (tty) updatePastePrompt();
     else say(pasteMarker(pendingPaste));
   }

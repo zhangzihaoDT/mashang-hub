@@ -115,7 +115,7 @@ Open <http://localhost:3000>. For user authentication, also set `HUB_ACCESS_TOKE
 
 ### Content 终端对话
 
-Content 的定位是把已经产生的内容整理成可长期保存的知识资产，不负责和用户讨论内容。`npm run mashang -- content notes --hub https://your-hub.example`（已 link 时用 `mashang content notes`）进入记录入口，输入内容后自动整理并保存到本地；`mashang content flomo` 自动整理并同步到 Flomo。单行回车即提交；多行可直接粘贴，粘贴边界识别为一个整块并显示 `[pasted~Nlines]`，按 Enter 提交；也可以用 `/paste` 后逐行输入、单独一行 `/end` 提交；失败时按 Enter 重试或重新检查，Ctrl+C 退出。首次隐藏输入 Hub 用户令牌，再次启动恢复上次会话。需要更新 Hub 与 Worker 并启用 Notes。完整配置与验收见 [Content CLI](docs/content-cli.md)。
+Content 的定位是把已经产生的内容整理成可长期保存的知识资产，不负责和用户讨论内容。`npm run mashang -- content notes --hub https://your-hub.example`（已 link 时用 `mashang content notes`）进入记录入口，输入内容后自动整理并保存到本地；`mashang content flomo` 自动整理并同步到 Flomo。单行回车即提交；多行可直接粘贴，每个粘贴片段显示 `[pasted~Nlines]`，连续粘贴显示多个标记并合并提交；也可以用 `/paste` 后逐行输入、单独一行 `/end` 提交；失败时按 Enter 重试或重新检查，Ctrl+C 退出。首次隐藏输入 Hub 用户令牌，再次启动恢复上次会话。需要更新 Hub 与 Worker 并启用 Notes。完整配置与验收见 [Content CLI](docs/content-cli.md)。
 
 ### 本地 Runtime 运维
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { hubURL } from '../cli/hub-client.mjs';
-import { terminalText, parseContentArgs, noteTitle, createPasteParser } from '../cli/content.mjs';
+import { terminalText, parseContentArgs, noteTitle, createPasteParser, appendPending } from '../cli/content.mjs';
 import { readTaskResult } from '../worker/task-result.mjs';
 import { selectAvailableModel } from '../public/model-selection.js';
 
@@ -37,6 +37,13 @@ parser.write('第三行\x1b[201~after');
 assert.deepEqual(typed, ['before', 'after'], 'text outside paste boundaries is passed through');
 assert.deepEqual(pasted, ['第一行\n第二行\n第三行'], 'the entire paste is captured once, even across chunks');
 assert.equal(starts, 1);
+assert.equal(appendPending(null, '', 'A1\nA2'), 'A1\nA2', 'first paste creates the pending composition');
+assert.equal(appendPending('A1\nA2', '手动输入', 'B1\nB2'), 'A1\nA2\n手动输入\nB1\nB2', 'typed text and later pastes compose in order');
+assert.equal(appendPending('A1\nA2', '', 'B1\nB2'), 'A1\nA2\nB1\nB2', 'consecutive pastes accumulate');
+const afterBoundary = [];
+const boundaryParser = createPasteParser({ onData: text => afterBoundary.push(text), onPaste: () => {} });
+boundaryParser.write('\x1b[200~A\x1b[201~\nB');
+assert.deepEqual(afterBoundary, ['B'], 'a terminal boundary newline is not readline input');
 const request = { taskId:'task', sessionId:'session', attemptId:'attempt', dispatchId:'dispatch' };
 const entry = { ...request, executor:'agent', events:[{ type:'agent.message.completed', text:'durable result', contentCard:null, operationPreview:{ private:'must not escape' } }] };
 const journal = { entries:{ task:entry } }, original = JSON.stringify(journal);
