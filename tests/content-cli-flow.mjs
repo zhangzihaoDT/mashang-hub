@@ -99,9 +99,14 @@ export async function verifyContentCLI({ base, temp, entries, api, until, browse
     await stop();
 
     start('notes', 'cli-notes'); await waitText('回车即整理并保存');
-    input('/paste'); await waitText('多行输入'); input('第一行'); input('第二行'); input('/end'); await waitText('已保存到本地');
+    const tasksBeforePaste = (await tasksFor(sessionId)).length;
+    cli.stdin.write('\x1b[200~第一行\n第二行\x1b[201~'); await waitText('[pasted~2lines]');
+    await new Promise(resolve => setTimeout(resolve, 120));
+    input(''); await waitText('已保存到本地');
+    assert.equal((await tasksFor(sessionId)).length, tasksBeforePaste + 1, 'one bracketed paste saves exactly one note');
     const tasksBeforeRetired = (await tasksFor(sessionId)).length;
-    input('/status'); await waitText('直接输入内容即可');
+    input('/status'); await waitText('直接输入或粘贴内容');
+    input('/paste'); await waitText('直接输入或粘贴内容');
     assert.equal((await tasksFor(sessionId)).length, tasksBeforeRetired, 'removed commands are never saved or executed');
     await stop();
 

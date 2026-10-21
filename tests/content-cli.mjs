@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { hubURL } from '../cli/hub-client.mjs';
-import { terminalText, parseContentArgs, noteTitle, createPasteParser, appendPending } from '../cli/content.mjs';
+import { terminalText, terminalMessage, successLine, parseContentArgs, noteTitle, createPasteParser, appendPending } from '../cli/content.mjs';
 import { readTaskResult } from '../worker/task-result.mjs';
 import { selectAvailableModel } from '../public/model-selection.js';
 
@@ -17,6 +17,11 @@ assert.equal(hubURL('wss://hub.example.test'), 'https://hub.example.test');
 assert.equal(hubURL('http://127.0.0.1:3000'), 'http://127.0.0.1:3000');
 for (const url of ['http://remote.example.test', 'https://user:secret@hub.example.test', 'https://hub.example.test/path', 'https://hub.example.test?token=secret', 'file:///tmp/test']) assert.throws(() => hubURL(url));
 assert.equal(terminalText('\x1b[31m正文\x1b[0m\x1b]52;c;attack\x07\r\u202e\n下一行'), '正文\n下一行');
+assert.equal(terminalMessage('\x1b[31m提示\x1b[0m'), '提示\n', 'inline messages end with exactly one newline');
+assert.equal(terminalMessage('结果', { block: true }), '结果\n\n', 'a finished record leaves one empty line before the next prompt');
+assert.equal(terminalMessage('结果\n\n', { block: true }), '结果\n\n', 'consecutive records never accumulate blank lines');
+assert.equal(successLine({ target: 'notes', text: '原文第一行' }, null), '✓ 已保存到本地\n  标题：原文第一行\n  位置：本地 Notes 库');
+assert.equal(successLine({ target: 'flomo', text: '原文' }, { contentCard: { title: '标题\n第二行' }, text: '正文' }), '✓ 已同步到 Flomo\n  标题：标题 第二行', 'a card title cannot break the result block');
 assert.deepEqual(parseContentArgs(['notes']), { positional:['notes'], target:'notes' });
 assert.equal(parseContentArgs(['flomo', '--hub', 'https://hub.example.test']).target, 'flomo');
 assert.equal(parseContentArgs([]).target, null, 'no target only shows usage');

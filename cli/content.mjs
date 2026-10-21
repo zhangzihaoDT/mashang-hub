@@ -15,13 +15,20 @@ export const HELP = `用法：
   mashang content flomo [--hub URL]
 
 直接输入内容，回车即整理并保存/同步。
-多行可直接粘贴，按 Enter 提交；也可 /paste 后逐行输入，单独一行 /end 提交。Ctrl+C 退出。
+多行可直接粘贴，按 Enter 提交。Ctrl+C 退出。
 
 环境：HUB_URL、HUB_ACCESS_TOKEN、MASHANG_CLI_STATE_DIR`;
 
 // Provider text must not be able to inject terminal control sequences.
 export function terminalText(value) {
   return stripVTControlCharacters(String(value)).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, '');
+}
+
+// Every message ends with exactly one newline. A block (a finished record) adds
+// one empty line before the next prompt; trailing newlines are normalized so
+// consecutive blocks can never accumulate blank lines.
+export function terminalMessage(value, { block = false } = {}) {
+  return terminalText(value).replace(/\n+$/, '') + (block ? '\n\n' : '\n');
 }
 
 export function parseContentArgs(args) {
@@ -44,6 +51,17 @@ export function noteTitle(result, original = '') {
   if (card?.title) return card.title;
   const first = String(result?.text || original).split('\n')[0].trim();
   return first.replace(/^\*\*|\*\*$/g, '').trim().slice(0, 120) || '未命名笔记';
+}
+
+// Result details sit one level under the status line so each record reads as a
+// single block. A card title may contain line breaks; they must not escape the
+// block or push the next prompt out of alignment.
+const DETAIL = '  ';
+export function successLine(entry, result) {
+  const lines = [`✓ ${(TARGETS[entry.target] || TARGETS.notes).success}`];
+  if (result?.contentCard?.title || result?.text || entry.text) lines.push(`${DETAIL}标题：${noteTitle(result, entry.text).replace(/[\r\n]+/g, ' ')}`);
+  if (entry.target === 'notes') lines.push(`${DETAIL}位置：本地 Notes 库`);
+  return lines.join('\n');
 }
 
 const PASTE_START = '\x1b[200~';
@@ -122,7 +140,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Old commands are not executed; they only get a short migration hint instead
 // of being saved as note content by accident.
-const RETIRED_COMMANDS = new Set(['/status', '/retry', '/cancel', '/web', '/new', '/model', '/models', '/help', '/sessions', '/resume', '/discard', '/quit']);
+const RETIRED_COMMANDS = new Set(['/status', '/retry', '/cancel', '/web', '/new', '/model', '/models', '/help', '/sessions', '/resume', '/discard', '/quit', '/paste', '/end']);
 
 function taskFailureReason(task, reported) {
   if (reported) return reported;
@@ -179,7 +197,7 @@ export async function runContent(args, env = process.env) {
   await client.selectSession();
 
   const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-  let rl, closed = false, paste = null, active = null, pendingPaste = null, pastePrefix = '';
+  let rl, closed = false, active = null, pendingPaste = null, pastePrefix = '';
   let pendingLabels = [], ignoreEmptyUntil = 0;
   let retry = null, commandQueue = Promise.resolve(), eventsReady = false, resultEndpointMissing = false;
   const liveResults = new Map(), terminalErrors = new Map();
@@ -189,10 +207,10 @@ export async function runContent(args, env = process.env) {
     rl.setPrompt(labels ? `${target.prompt}${labels} ` : target.prompt);
     rl.prompt(true);
   }
-  const say = value => {
+  const say = (value, options) => {
     if (closed) return;
     if (tty && rl) { clearLine(process.stdout, 0); cursorTo(process.stdout, 0); }
-    process.stdout.write(terminalText(value) + '\n');
+    process.stdout.write(terminalMessage(value, options));
     renderPrompt();
   };
   async function readResult(task) {
@@ -268,12 +286,6 @@ export async function runContent(args, env = process.env) {
     }
     return control;
   }
-  function successLine(entry, result) {
-    const lines = [`✓ ${(TARGETS[entry.target] || target).success}`];
-    if (result?.contentCard?.title || result?.text || entry.text) lines.push(`标题：${noteTitle(result, entry.text)}`);
-    if (entry.target === 'notes') lines.push('位置：本地 Notes 库');
-    return lines.join('\n');
-  }
   function reportFailure(entry, reason, uncertain = false) {
     if (closed) return;
     const prefix = entry.target === 'notes' ? '未保存' : '未同步';
@@ -281,12 +293,12 @@ export async function runContent(args, env = process.env) {
       ? { kind: 'check', taskId: entry.taskId, target: entry.target, text: entry.text || '' }
       : { kind: 'text', text: entry.text, target: entry.target };
     const next = uncertain || !entry.text ? '按 Enter 重新检查；或直接输入新内容。' : '按 Enter 重试；或直接输入新内容。';
-    say(`✗ ${prefix}：${reason}\n${next}`);
+    say(`✗ ${prefix}：${reason}\n${DETAIL}${next}`, { block: true });
   }
   async function reportOutcome(entry, task) {
     if (!settled(task)) {
       retry = { kind: 'check', taskId: entry.taskId, target: entry.target, text: entry.text || '' };
-      say('仍在整理这一条…\n完成后按 Enter 查看结果。');
+      say(`仍在整理这一条…\n${DETAIL}完成后按 Enter 查看结果。`, { block: true });
       return;
     }
     const result = await readResult(task);
@@ -295,7 +307,7 @@ export async function runContent(args, env = process.env) {
         const control = await waitForControl(entry.taskId);
         if (control?.status === 'COMPLETED') {
           retry = null;
-          say(successLine(entry, result));
+          say(successLine(entry, result), { block: true });
           await markReported(entry.taskId);
           return;
         }
@@ -304,7 +316,7 @@ export async function runContent(args, env = process.env) {
       }
       if (result?.contentCard?.notice) {
         retry = null;
-        say(successLine(entry, result));
+        say(successLine(entry, result), { block: true });
         await markReported(entry.taskId);
         return;
       }
@@ -334,7 +346,7 @@ export async function runContent(args, env = process.env) {
     const task = await getTask(entry.taskId);
     if (!task) {
       retry = entry;
-      say('暂时无法读取上次结果；请稍后再按 Enter。');
+      say('暂时无法读取上次结果；请稍后再按 Enter。', { block: true });
       return;
     }
     await reportOutcome(entry, task);
@@ -344,18 +356,18 @@ export async function runContent(args, env = process.env) {
     if (active) { say('上一笔仍在整理，请稍后再输入。'); return; }
     if (!eventsReady) {
       retry = { kind: 'text', text, target: target.id };
-      say('连接正在恢复；内容已保留，稍后按 Enter 提交。');
+      say('连接正在恢复；内容已保留，稍后按 Enter 提交。', { block: true });
       return;
     }
     const existing = await latestTask().catch(() => undefined);
     if (existing === undefined) {
       retry = { kind: 'text', text, target: target.id };
-      say('暂时无法连接；内容已保留，按 Enter 重试。');
+      say('暂时无法连接；内容已保留，按 Enter 重试。', { block: true });
       return;
     }
     if (existing && !settled(existing)) {
       retry = { kind: 'text', text, target: target.id };
-      say('上一笔仍在整理；这段内容已保留，稍后按 Enter 提交。');
+      say('上一笔仍在整理；这段内容已保留，稍后按 Enter 提交。', { block: true });
       return;
     }
     retry = null;
@@ -381,12 +393,12 @@ export async function runContent(args, env = process.env) {
           return;
         }
         retry = { kind: 'text', text, target: target.id };
-        say('提交结果待确认；按 Enter 重试，或直接输入新内容。');
+        say('提交结果待确认；按 Enter 重试，或直接输入新内容。', { block: true });
         return;
       }
       if (error.status === 409 || error.status === 503) {
         retry = { kind: 'text', text, target: target.id };
-        say(`${friendlyError(error)}\n内容已保留，按 Enter 重试。`);
+        say(`${friendlyError(error)}\n${DETAIL}内容已保留，按 Enter 重试。`, { block: true });
         return;
       }
       throw error;
@@ -397,7 +409,7 @@ export async function runContent(args, env = process.env) {
     void watch(entry);
   }
   async function emptyLine() {
-    if (active || paste || !retry) return;
+    if (active || !retry) return;
     const current = retry;
     if (current.kind === 'text') { retry = null; await submitContent(current.text); }
     else await recheck(current);
@@ -413,25 +425,15 @@ export async function runContent(args, env = process.env) {
       // Ignore that boundary newline, but keep a later deliberate Enter.
       if (!line.trim() && Date.now() < ignoreEmptyUntil) { ignoreEmptyUntil = 0; return; }
       ignoreEmptyUntil = 0;
-      if (active) { say('上一笔仍在整理；粘贴内容已保留，完成后按 Enter 提交。'); return; }
+      if (active) { say('上一笔仍在整理；粘贴内容已保留，完成后按 Enter 提交。', { block: true }); return; }
       const pasted = pendingPaste; pendingPaste = null; pendingLabels = [];
       resetPrompt();
       await submitContent(line.trim() ? `${pasted}\n${line}` : pasted);
       return;
     }
     if (line.trim() === '/exit') { rl.close(); return; }
-    if (paste) {
-      if (line === '/end') {
-        const text = paste.join('\n'); paste = null;
-        if (text.trim()) await submitContent(text);
-        else say('没有内容可提交。');
-      } else paste.push(line);
-      return;
-    }
     if (!line.trim()) { await emptyLine(); return; }
-    if (line.trim() === '/paste') { paste = []; say('多行输入：粘贴或逐行输入内容，单独一行 /end 提交。'); return; }
-    if (line.trim() === '/end') { say('当前不在多行输入；直接输入内容即可。'); return; }
-    if (RETIRED_COMMANDS.has(line.trim())) { say('直接输入内容即可；多行用 /paste，/end 提交。'); return; }
+    if (RETIRED_COMMANDS.has(line.trim())) { say('直接输入或粘贴内容，按 Enter 提交。'); return; }
     await submitContent(line);
   }
   function enqueueLine(line) {
@@ -454,11 +456,6 @@ export async function runContent(args, env = process.env) {
     const normalized = String(text ?? '').replace(/\r\n?/g, '\n').replace(/\n+$/, '');
     const combined = appendPending(pendingPaste, prefix, text);
     if (combined === pendingPaste) return;
-    if (paste) {
-      paste.push(combined);
-      say(pasteMarker(combined));
-      return;
-    }
     if (prefix) pendingLabels.push(terminalText(prefix));
     if (normalized.trim()) pendingLabels.push(pasteMarker(normalized));
     pendingPaste = combined;
@@ -466,35 +463,38 @@ export async function runContent(args, env = process.env) {
     if (tty) updatePastePrompt();
     else say(pasteMarker(pendingPaste));
   }
-  if (tty) process.stdin.setEncoding('utf8');
+  process.stdin.setEncoding('utf8');
   rl = createInterface({ input: process.stdin, output: process.stdout, terminal: tty, prompt: target.prompt, historySize: 100 });
-  let cleanupPaste = () => {};
+  // Bracketed paste boundaries let the entire paste arrive as one block, while
+  // normal typing and readline editing keep working unchanged. Parsing sits in
+  // front of readline so piped input follows the same composition rules.
+  const originalEmit = process.stdin.emit;
+  const parser = createPasteParser({
+    onStart() {
+      pastePrefix = tty ? (rl?.line || '') : '';
+      if (pastePrefix) rl.write(null, { ctrl: true, name: 'u' });
+    },
+    onData(text) { originalEmit.call(process.stdin, 'data', text); },
+    onPaste(text) { finishPaste(text); },
+  });
+  process.stdin.emit = function (event, ...args) {
+    if (event !== 'data') return originalEmit.apply(this, [event, ...args]);
+    parser.write(args[0]);
+    return true;
+  };
+  const cleanupPaste = () => {
+    process.stdin.emit = originalEmit;
+    if (tty) process.stdout.write('\x1b[?2004l');
+  };
   if (tty) {
-    // Bracketed paste boundaries let the entire paste arrive as one block,
-    // while normal typing and readline editing keep working unchanged.
     process.stdout.write('\x1b[?2004h');
-    const originalEmit = process.stdin.emit;
-    const parser = createPasteParser({
-      onStart() {
-        pastePrefix = rl?.line || '';
-        if (pastePrefix) rl.write(null, { ctrl: true, name: 'u' });
-      },
-      onData(text) { originalEmit.call(process.stdin, 'data', text); },
-      onPaste(text) { finishPaste(text); },
-    });
-    process.stdin.emit = function (event, ...args) {
-      if (event !== 'data') return originalEmit.apply(this, [event, ...args]);
-      parser.write(args[0]);
-      return true;
-    };
-    cleanupPaste = () => { process.stdin.emit = originalEmit; process.stdout.write('\x1b[?2004l'); };
     process.once('exit', () => process.stdout.write('\x1b[?2004l'));
   }
   rl.on('line', line => enqueueLine(line));
 
   try { await connectEvents(); }
   catch (error) { cleanupPaste(); rl.close(); throw error; }
-  say(`${intro}\n多行可直接粘贴，按 Enter 提交；也可 /paste 后逐行输入，单独一行 /end 提交。Ctrl+C 退出。\n`);
+  say(`${intro}\n多行可直接粘贴，按 Enter 提交。Ctrl+C 退出。`, { block: true });
 
   const previousTaskId = client.profile.lastTaskId;
   if (previousTaskId && client.profile.lastReportedTaskId !== previousTaskId) {
