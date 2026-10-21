@@ -6,7 +6,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const html = await readFile(join(here, "..", "public", "index.html"), "utf8");
 const app = await readFile(join(here, "..", "public", "app.js"), "utf8");
 const runtimeUI = await readFile(join(here, "..", "public", "runtime-ui.js"), "utf8");
-const required = ["connection", "sessionMeta", "messages", "runState", "resultBody", "resultContent", "promptForm", "prompt", "modelSelect", "send", "cancel"];
+const required = ["connection", "sessionMeta", "messages", "runState", "resultBody", "resultContent", "promptForm", "prompt", "modelSelect", "send", "cancel", "serviceRuntimeBar", "openServiceRuntime", "aksignalStatusBar", "openAksignalRuntime", "aksignalRuntimeDrawer", "conversationRuntime", "closeAksignalRuntime"];
 const optional = ["artifacts", "debug", "debugToggle", "debugClose", "debugContent", "loginOverlay", "loginForm", "accessToken", "loginError", "aksignalRuntimeTitle", "closeAksignalRuntime", "openAksignalRuntime"];
 const hasID = (id) => new RegExp(`id=["']${id}["']`).test(html);
 const referenced = (id) => app.includes(`#${id}`) || new RegExp(`["']${id}["']`).test(runtimeUI) || new RegExp(`aria-labelledby=["']${id}["']`).test(html);

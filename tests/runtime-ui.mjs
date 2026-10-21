@@ -26,7 +26,7 @@ function makeElement(id) {
     fire(type, event) { (listeners[type] || []).forEach((handler) => handler(event)); },
   };
 }
-for (const id of ["conversationRuntime", "independentRuntime", "marketReport", "aksignalRuntimeDrawer", "aksignalStatusBar", "aksignalRunStatus", "aksignalRunDetail", "aksignalRunDot", "openAksignalRuntime", "closeAksignalRuntime"]) elements.set(id, makeElement(id));
+for (const id of ["serviceRuntimeBar", "serviceRuntimeStatus", "openServiceRuntime", "runtimeDrawerDescription", "conversationRuntime", "independentRuntime", "marketReport", "aksignalRuntimeDrawer", "aksignalStatusBar", "aksignalRunStatus", "aksignalRunDetail", "aksignalRunDot", "openAksignalRuntime", "closeAksignalRuntime"]) elements.set(id, makeElement(id));
 
 global.document = { getElementById: (id) => elements.get(id) || null };
 global.window = { setInterval: () => 1, clearInterval: () => {} };
@@ -64,9 +64,16 @@ calls.length = 0;
 
 const rendered = elements.get("conversationRuntime").innerHTML;
 assert.match(rendered, /Daily pipeline/);
+elements.get("openServiceRuntime").fire("click", { target: {} });
+assert.equal(elements.get("aksignalRuntimeDrawer").open, true);
+runtimeUI.update({ type: "runtime.snapshot", ...runtimeResponse() });
+assert.equal(elements.get("aksignalRuntimeDrawer").open, true, "Service snapshot refresh keeps modal open");
+assert.equal(elements.get("serviceRuntimeBar").classList.contains("hidden"), false);
 assert.match(rendered, /data-op="run" data-target="future-no-arg"/);
 assert.doesNotMatch(rendered, /data-target="fetch"/);
 runtimeUI.setWorkspace("aksignal");
+assert.equal(elements.get("serviceRuntimeBar").classList.contains("hidden"), true);
+assert.equal(elements.get("aksignalRuntimeDrawer").open, false, "workspace switch closes prior modal");
 const aksignalPanel = elements.get("conversationRuntime").innerHTML;
 assert.match(aksignalPanel, /自动调度/);
 assert.match(aksignalPanel, /恢复自动调度/);

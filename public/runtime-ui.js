@@ -66,6 +66,7 @@ function formatClockTime(value) {
  * POST /api/runtime/controls/:id/decision; live updates arrive over SSE.
  */
 export function initRuntimeUI() {
+  const serviceBar = document.getElementById("serviceRuntimeBar");
   const conversationMount = document.getElementById("conversationRuntime");
   const independentMount = document.getElementById("independentRuntime");
   const businessMount = document.getElementById("businessRuntime");
@@ -278,9 +279,13 @@ export function initRuntimeUI() {
     const services = snapshot?.services || [];
     const jobs = snapshot?.jobs || [];
     const operations = snapshot?.operations || [];
+    serviceBar?.classList.toggle("hidden", workspace !== "service");
+    const serviceStatus = document.getElementById("serviceRuntimeStatus");
+    if (serviceStatus) serviceStatus.textContent = !workerOnline ? "Worker 离线" : snapshotStale() ? "状态快照过期" : "Worker 在线";
+    const drawerDescription = document.getElementById("runtimeDrawerDescription");
+    if (drawerDescription) drawerDescription.textContent = workspace === "aksignal" ? "AKsignal · Daily 与自动调度" : "Service · 服务、任务与自动调度";
     const mount = workspace === "aksignal" ? conversationMount : ["fetch", "knbase", "miit"].includes(workspace) ? independentMount : conversationMount;
     runtimeStatusBar?.classList.toggle('hidden', workspace !== 'aksignal');
-    if (workspace !== 'aksignal' && runtimeDrawer?.open) runtimeDrawer.close?.();
     if (mount) {
       // Older Workers may omit workspace metadata. Only presentation uses these legacy IDs/groups.
       const belongs = item => (item.workspace || ({fetch:"fetch",myknbase:"knbase"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
@@ -327,7 +332,7 @@ export function initRuntimeUI() {
       }
       if (historyOpen && mount.querySelector(".runtime-history")) mount.querySelector(".runtime-history").open = true;
       if (detailsOpen && mount.querySelector(".runtime-diagnostics")) mount.querySelector(".runtime-diagnostics").open = true;
-      if (activeActions.some(item=>item.status === "AWAITING_PERMISSION" && !inlineOperations.some(operation=>operation.id===item.targetId)) && mount === conversationMount) openRuntimeDrawer();
+      if (["service", "aksignal"].includes(workspace) && activeActions.some(item=>item.status === "AWAITING_PERMISSION" && !inlineOperations.some(operation=>operation.id===item.targetId)) && mount === conversationMount) openRuntimeDrawer();
       if (!workerOnline || snapshotStale()) for (const button of mount.querySelectorAll("button:not([data-refresh])")) button.disabled = true;
     }
   }
@@ -392,6 +397,7 @@ export function initRuntimeUI() {
 
   marketMount?.addEventListener('change',event=>{if(event.target.matches('[data-heat-mode]')){heatMode=event.target.value;render();}});
   marketMount?.addEventListener('click',event=>{const cell=event.target.closest('[data-heat-info]');if(cell) marketMount.querySelector('.heat-info').textContent=cell.dataset.heatInfo;});
+  document.getElementById('openServiceRuntime')?.addEventListener('click',openRuntimeDrawer);
   document.getElementById('openAksignalRuntime')?.addEventListener('click',openRuntimeDrawer);
   document.getElementById('closeAksignalRuntime')?.addEventListener('click',closeRuntimeDrawer);
   runtimeDrawer?.addEventListener('click',event=>{if(event.target===runtimeDrawer) closeRuntimeDrawer();});
@@ -409,5 +415,5 @@ export function initRuntimeUI() {
   const interval = window.setInterval(refresh, 15000);
   refresh();
 
-  return { update, refresh, setWorkspace(kind) { workspace = kind; render(); }, destroy: () => clearInterval(interval) };
+  return { update, refresh, setWorkspace(kind) { if (kind !== workspace) closeRuntimeDrawer(); workspace = kind; render(); }, destroy: () => clearInterval(interval) };
 }
