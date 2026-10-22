@@ -127,9 +127,16 @@ export async function verifyContentCLI({ base, temp, entries, api, until, browse
     });
     assert.equal(flomoControl.targetId, 'notes-flomo');
     assert.equal((await markdown()).length, beforeFlomo, 'Flomo sync does not pretend to save a local note');
+    // Switching uses the same authenticated session and actual Worker workflow.
+    input('/notes'); await waitText('已切换到 Notes');
+    input('CLI 切换后保存合成笔记'); await waitText('已保存到本地');
+    assert.equal((await markdown()).length, beforeFlomo + 1);
+    assert.equal((await profile()).data.sessionId, flomoSession);
+    input('/flomo'); await waitText('已切换到 Flomo');
     // An unconfirmed external send is never retried automatically; Enter only rechecks.
     input('超时合成 #测试'); await waitText('结果待确认');
     assert.match(output, /未同步/);
+    input('/notes'); await waitText('已切换到 Notes');
     const tasksBeforeRecheck = (await tasksFor(flomoSession)).length;
     input(''); await waitText('结果待确认');
     assert.equal((await tasksFor(flomoSession)).length, tasksBeforeRecheck, 'Enter rechecks without resubmitting');

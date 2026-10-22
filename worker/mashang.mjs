@@ -9,7 +9,7 @@ import { up, down, restart, run, runOperation, findService, findJob, findOperati
 const USAGE = `mashang — Hub client and local runtime manager
 
 Usage:
-  mashang content <notes|flomo> [--hub URL]
+  mashang content [notes|flomo] [--hub URL]
   mashang status [--json] [--strict]
   mashang up <service>
   mashang down <service>

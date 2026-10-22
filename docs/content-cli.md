@@ -1,6 +1,6 @@
 # Content CLI · 记录入口
 
-当前版本：V0.6.2（2026-10-21）
+当前版本：V0.6.3（2026-10-22，CLI 内模式切换与启动模式）
 
 `mashang content` 是内容记录入口，不是通用 Hub 交互终端。进入 `notes` 或 `flomo` 目标后，每次输入都会自动完成「整理 → 保存/同步」。任务、模型、恢复和幂等仍由 Hub / Worker 处理，不出现在 CLI 的正常输出里。
 
@@ -15,23 +15,29 @@
 需要 Node >=22.13。先更新并启动本仓库的 Hub 和 Worker；Worker 按 [Content 配置](content-notes.md) 启用 Notes。Hub 必须启用用户登录。客户端可在能访问 Hub 的另一台机器运行；不要求它拥有 Content 仓库。
 
 ```sh
-# 整理并保存到本地 Notes
+# 恢复上次模式；首次默认 Notes
+npm run mashang -- content --hub https://your-hub.example
+
+# 显式进入 Notes，整理并保存到本地
 npm run mashang -- content notes --hub https://your-hub.example
 
 # 整理并同步到 Flomo
 npm run mashang -- content flomo --hub https://your-hub.example
 
 # 已通过 npm link 安装命令时
+mashang content
 mashang content notes
 mashang content flomo
 ```
+
+不指定启动模式时，按 Hub 地址恢复上次模式；首次使用或旧配置没有模式记录时默认 Notes。显式 `notes` / `flomo` 优先，并成为下次默认模式。`--help` 只显示帮助，不连接 Hub。
 
 首次登录隐藏输入 Hub 用户访问令牌。自动化环境可通过 `HUB_ACCESS_TOKEN` 提供，不能使用 Worker 密钥。Hub 地址也可通过 `HUB_URL` 提供；默认 `http://127.0.0.1:3000` 仅用于本地开发。远程地址必须为 HTTPS。模型和会话由 Hub / 本地客户端配置决定，不作为 CLI 选项暴露。
 
 ```text
 Content · Notes
 直接输入内容，回车即整理并保存。
-多行可直接粘贴，按 Enter 提交。Ctrl+C 退出。
+/notes、/flomo 随时切换。多行可直接粘贴，按 Enter 提交。Ctrl+C 退出。
 
 notes › 今天想清楚的一件事是……
 正在整理并保存…
@@ -50,7 +56,11 @@ notes ›
 | --- | --- |
 | 一行文字 + 回车 | 立即整理并保存/同步 |
 | 直接粘贴多行文本 | 按终端粘贴边界识别为一个整块，每个片段显示一个 `[pasted~Nlines]`；按 Enter 后合并为一条记录提交 |
+| `/notes`、`/flomo` | 在同一会话、同一登录内切换；提示符立即更新为 `notes ›` / `flomo ›` |
+| `/both` | 提示暂不支持，不提交内容 |
 | `/exit`、Ctrl+C、Ctrl+D | 退出；已提交的记录继续由 Hub 处理 |
+
+模式命令独占一行，在粘贴待提交或上一条处理中也可使用。切换保留粘贴片段、手动输入及标记，下一次显式提交使用当前模式；已提交、处理中或待重试/检查的记录仍使用提交时的目标。失败后切换模式再按 Enter，仍重试或检查原目标；提示会说明目标。处理过程中输入的新内容作为未提交草稿保留，完成后再按 Enter 提交。粘贴正文中的 `/notes`、`/flomo` 是原文，不作为命令执行。
 
 终端粘贴使用 bracketed paste 的开始/结束边界。粘贴期间输入不会进入 readline 的逐行处理；粘贴结束后只显示 `[pasted~Nlines]`，不打印正文预览，按 Enter 才整理保存，不会在粘贴结束时自动提交。
 
@@ -104,7 +114,7 @@ notes › [pasted~11lines]手动输入的文字[pasted~11lines]
 
 ## 共享状态
 
-- 默认在 `~/.mashang/clients/` 按 Hub origin 保存登录 Cookie、当前会话 ID、模型选择和最近一次任务标记，配置文件权限为 0600。可用 `MASHANG_CLI_STATE_DIR` 修改位置；不保存令牌明文或笔记正文。
+- 默认在 `~/.mashang/clients/` 按 Hub origin 保存登录 Cookie、当前会话 ID、模型选择、当前模式（`contentTarget`）和最近一次任务标记（`lastTaskId` / `lastTarget`），配置文件权限为 0600。可用 `MASHANG_CLI_STATE_DIR` 修改位置；不保存令牌明文或笔记正文。草稿与可重试原文仅在当前进程内保留；重启只恢复任务状态，不重发原文。
 - CLI 与 Web 共用模型选择函数。CLI 启动时自动使用 Hub 的默认可用模型，不要求用户选择。
 - 笔记保存位置、原文留存、整理规则、去重与权限仍由 Worker / Content 的既有实现决定。“已保存到本地”指 Worker 所在机器。
 - CLI 与 Web 使用相同的后端业务工作流：Notes 使用 `save-input`，Flomo 使用受限的直接同步请求。CLI 不新增内容存储，也不扩展为通用聊天工具。
@@ -118,4 +128,4 @@ CONTENT_BROWSER=1 PLAYWRIGHT_MODULE=/absolute/path/to/playwright \
 npm test
 ```
 
-集成测试用实际 CLI、Hub、Worker 与 Content 文件 API，模拟模型和外部发送，数据仅写临时目录。覆盖 Notes 自动整理保存、Flomo 自动同步确认、失败保留原文、Enter 重试/重新检查、多行输入、重启接续和重复提交防护，以及可选的 Web 会话共享。此功能为源代码实现，不代表已经部署到在线 Hub。
+集成测试用实际 CLI、Hub、Worker 与 Content 文件 API，模拟模型和外部发送，数据仅写临时目录。另有真实 readline 配合 mock Hub 的模式回归测试，覆盖首次默认 Notes、记忆/显式启动模式、提示符、同一登录会话、多段粘贴与手动输入保留、处理中切换、双向失败重试绑定原目标、不确定结果仅检查、重启后按原目标恢复。集成测试覆盖 Notes 自动整理保存、Flomo 自动同步确认、失败保留原文、Enter 重试/重新检查、多行输入、重启接续和重复提交防护，以及可选的 Web 会话共享。此功能为源代码实现，不代表已经部署到在线 Hub。

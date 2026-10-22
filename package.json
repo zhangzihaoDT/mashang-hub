@@ -1,6 +1,6 @@
 {
   "name": "mashang-hub",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "type": "module",
   "bin": {
@@ -51,7 +51,7 @@
     "test:snapshot-visuals": "node tests/market-snapshot-visuals.mjs && node tests/trend-comparison.mjs",
     "test:content": "node tests/content-session.mjs && node tests/content-bridge.mjs",
     "test:content-browser": "CONTENT_BROWSER=1 node tests/content-bridge.mjs",
-    "test:content-cli": "node tests/content-cli.mjs && node tests/hub-client-transport.mjs && CONTENT_CLI=1 node tests/content-bridge.mjs"
+    "test:content-cli": "node tests/content-cli.mjs && node tests/content-cli-modes.mjs && node tests/hub-client-transport.mjs && CONTENT_CLI=1 node tests/content-bridge.mjs"
   },
   "engines": {
     "node": ">=22.13"

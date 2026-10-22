@@ -11,9 +11,12 @@ export const TARGETS = Object.freeze({
 });
 
 export const HELP = `用法：
+  mashang content [--hub URL]
   mashang content notes [--hub URL]
   mashang content flomo [--hub URL]
 
+未指定模式时恢复上次模式，首次默认 Notes。
+/notes、/flomo 随时切换，未提交内容保留。
 直接输入内容，回车即整理并保存/同步。
 多行可直接粘贴，按 Enter 提交。Ctrl+C 退出。
 
@@ -44,6 +47,10 @@ export function parseContentArgs(args) {
   result.target = result.positional[0] || null;
   if (result.target && !TARGETS[result.target]) throw Error(`未知记录目标：${result.target}。请使用 notes 或 flomo。`);
   return result;
+}
+
+export function initialTarget(explicit, saved) {
+  return Object.hasOwn(TARGETS, explicit) ? TARGETS[explicit] : Object.hasOwn(TARGETS, saved) ? TARGETS[saved] : TARGETS.notes;
 }
 
 export function noteTitle(result, original = '') {
@@ -182,13 +189,14 @@ function friendlyError(error) {
 
 export async function runContent(args, env = process.env) {
   const opts = parseContentArgs(args);
-  if (opts.help || !opts.target) { process.stdout.write(HELP + '\n'); return; }
-  const target = TARGETS[opts.target];
+  if (opts.help) { process.stdout.write(HELP + '\n'); return; }
   const abort = new AbortController();
   const client = new HubClient(opts.hub || env.HUB_URL || 'http://127.0.0.1:3000', {
     stateDir: env.MASHANG_CLI_STATE_DIR, token: env.HUB_ACCESS_TOKEN, signal: abort.signal,
   });
   await client.load(); await client.authenticate(secretPrompt);
+  let target = initialTarget(opts.target, client.profile.contentTarget);
+  client.profile.contentTarget = target.id;
   const models = (await client.api('/api/models')).models || [];
   const model = selectAvailableModel(models);
   if (!model) throw Error('Hub 暂无可用模型，请联系管理员检查 Worker 连接。');
@@ -292,7 +300,8 @@ export async function runContent(args, env = process.env) {
     retry = uncertain || !entry.text
       ? { kind: 'check', taskId: entry.taskId, target: entry.target, text: entry.text || '' }
       : { kind: 'text', text: entry.text, target: entry.target };
-    const next = uncertain || !entry.text ? '按 Enter 重新检查；或直接输入新内容。' : '按 Enter 重试；或直接输入新内容。';
+    const mode = entry.target === 'notes' ? 'Notes' : 'Flomo';
+    const next = uncertain || !entry.text ? `按 Enter 重新检查 ${mode}；或直接输入新内容。` : `按 Enter 重试 ${mode}；或直接输入新内容。`;
     say(`✗ ${prefix}：${reason}\n${DETAIL}${next}`, { block: true });
   }
   async function reportOutcome(entry, task) {
@@ -351,67 +360,68 @@ export async function runContent(args, env = process.env) {
     }
     await reportOutcome(entry, task);
   }
-  async function submitContent(text) {
+  async function submitContent(text, submissionTarget = target.id) {
     if (!text.trim()) return;
     if (active) { say('上一笔仍在整理，请稍后再输入。'); return; }
     if (!eventsReady) {
-      retry = { kind: 'text', text, target: target.id };
+      retry = { kind: 'text', text, target: submissionTarget };
       say('连接正在恢复；内容已保留，稍后按 Enter 提交。', { block: true });
       return;
     }
     const existing = await latestTask().catch(() => undefined);
     if (existing === undefined) {
-      retry = { kind: 'text', text, target: target.id };
+      retry = { kind: 'text', text, target: submissionTarget };
       say('暂时无法连接；内容已保留，按 Enter 重试。', { block: true });
       return;
     }
     if (existing && !settled(existing)) {
-      retry = { kind: 'text', text, target: target.id };
+      retry = { kind: 'text', text, target: submissionTarget };
       say('上一笔仍在整理；这段内容已保留，稍后按 Enter 提交。', { block: true });
       return;
     }
     retry = null;
-    const entry = { text, target: target.id, taskId: null };
+    const entry = { text, target: submissionTarget, taskId: null };
     const startedAt = Date.now();
-    say(target.id === 'notes' ? '正在整理并保存…' : '正在整理并同步…');
+    say(entry.target === 'notes' ? '正在整理并保存…' : '正在整理并同步…');
     let task;
     try {
-      if (target.id === 'flomo') {
+      if (entry.target === 'flomo') {
         const scopedAuthorization = { targetId: 'notes-flomo', sourceDigest: snapshotDigest(text) };
         task = await client.submit(`直接同步到 Flomo：${text}`, null, { scopedAuthorization });
       } else task = await client.submit(text, { action: 'save-input' });
     } catch (error) {
-      if (!error.status || error.status >= 500) {
+      if (!error.status || (error.status >= 500 && error.status !== 503)) {
         const candidate = await latestTask().catch(() => null);
-        const adopted = candidate?.createdAt >= startedAt - 2000 ? candidate : null;
+        // A recent previous record is not evidence that this submission succeeded.
+        const adopted = candidate && candidate.taskId !== existing?.taskId && candidate.createdAt >= startedAt - 2000 ? candidate : null;
         if (adopted) {
           entry.taskId = adopted.taskId; active = entry;
-          client.profile.lastTaskId = adopted.taskId; client.profile.lastTarget = target.id;
+          client.profile.lastTaskId = adopted.taskId; client.profile.lastTarget = entry.target;
           await client.save().catch(() => {});
           say('提交响应中断，已接续本次记录；不会重发。');
           void watch(entry);
           return;
         }
-        retry = { kind: 'text', text, target: target.id };
+        retry = { kind: 'text', text, target: entry.target };
         say('提交结果待确认；按 Enter 重试，或直接输入新内容。', { block: true });
         return;
       }
       if (error.status === 409 || error.status === 503) {
-        retry = { kind: 'text', text, target: target.id };
+        retry = { kind: 'text', text, target: entry.target };
         say(`${friendlyError(error)}\n${DETAIL}内容已保留，按 Enter 重试。`, { block: true });
         return;
       }
       throw error;
     }
     entry.taskId = task.taskId; active = entry;
-    client.profile.lastTaskId = task.taskId; client.profile.lastTarget = target.id;
+    client.profile.lastTaskId = task.taskId; client.profile.lastTarget = entry.target;
     await client.save().catch(() => {});
     void watch(entry);
   }
   async function emptyLine() {
     if (active || !retry) return;
     const current = retry;
-    if (current.kind === 'text') { retry = null; await submitContent(current.text); }
+    if (current.kind === 'text') { retry = null; await submitContent(current.text, current.target); }
     else await recheck(current);
   }
 
@@ -419,21 +429,36 @@ export async function runContent(args, env = process.env) {
     ? 'Content · Notes\n直接输入内容，回车即整理并保存。'
     : 'Content · Flomo\n直接输入内容，回车即整理并同步到 Flomo。';
   async function processLine(line) {
+    const command = line.trim();
+    if (command === '/exit') { rl.close(); return; }
+    if (command === '/notes' || command === '/flomo') {
+      target = TARGETS[command.slice(1)];
+      client.profile.contentTarget = target.id;
+      say(`已切换到 ${target.id === 'notes' ? 'Notes · 本地保存' : 'Flomo · 同步到 Flomo'}。${pendingPaste !== null ? '未提交内容已保留。' : ''}${retry ? `待重试或检查的记录仍属于 ${retry.target === 'notes' ? 'Notes' : 'Flomo'}。` : ''}`);
+      await client.save().catch(() => say('无法记住本次模式；当前切换仍有效。'));
+      return;
+    }
+    if (command === '/both') { say('暂不支持 /both；请用 /notes 或 /flomo 切换。'); return; }
+    if (RETIRED_COMMANDS.has(command)) { say('直接输入或粘贴内容，按 Enter 提交。'); return; }
+    if (active) {
+      if (command) {
+        pendingPaste = appendPending(pendingPaste, '', line);
+        pendingLabels.push(terminalText(line));
+      }
+      if (pendingPaste !== null) say('上一笔仍在整理；未提交内容已保留，完成后按 Enter 提交。', { block: true });
+      return;
+    }
     if (pendingPaste !== null) {
-      if (line.trim() === '/exit') { rl.close(); return; }
       // Some terminals emit a line break between bracketed paste chunks.
       // Ignore that boundary newline, but keep a later deliberate Enter.
       if (!line.trim() && Date.now() < ignoreEmptyUntil) { ignoreEmptyUntil = 0; return; }
       ignoreEmptyUntil = 0;
-      if (active) { say('上一笔仍在整理；粘贴内容已保留，完成后按 Enter 提交。', { block: true }); return; }
       const pasted = pendingPaste; pendingPaste = null; pendingLabels = [];
       resetPrompt();
       await submitContent(line.trim() ? `${pasted}\n${line}` : pasted);
       return;
     }
-    if (line.trim() === '/exit') { rl.close(); return; }
     if (!line.trim()) { await emptyLine(); return; }
-    if (RETIRED_COMMANDS.has(line.trim())) { say('直接输入或粘贴内容，按 Enter 提交。'); return; }
     await submitContent(line);
   }
   function enqueueLine(line) {
@@ -494,7 +519,7 @@ export async function runContent(args, env = process.env) {
 
   try { await connectEvents(); }
   catch (error) { cleanupPaste(); rl.close(); throw error; }
-  say(`${intro}\n多行可直接粘贴，按 Enter 提交。Ctrl+C 退出。`, { block: true });
+  say(`${intro}\n/notes、/flomo 随时切换。多行可直接粘贴，按 Enter 提交。Ctrl+C 退出。`, { block: true });
 
   const previousTaskId = client.profile.lastTaskId;
   if (previousTaskId && client.profile.lastReportedTaskId !== previousTaskId) {

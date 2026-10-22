@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { hubURL } from '../cli/hub-client.mjs';
-import { terminalText, terminalMessage, successLine, parseContentArgs, noteTitle, createPasteParser, appendPending } from '../cli/content.mjs';
+import { terminalText, terminalMessage, successLine, parseContentArgs, initialTarget, noteTitle, createPasteParser, appendPending } from '../cli/content.mjs';
 import { readTaskResult } from '../worker/task-result.mjs';
 import { selectAvailableModel } from '../public/model-selection.js';
 
@@ -24,7 +24,13 @@ assert.equal(successLine({ target: 'notes', text: '原文第一行' }, null), '�
 assert.equal(successLine({ target: 'flomo', text: '原文' }, { contentCard: { title: '标题\n第二行' }, text: '正文' }), '✓ 已同步到 Flomo\n  标题：标题 第二行', 'a card title cannot break the result block');
 assert.deepEqual(parseContentArgs(['notes']), { positional:['notes'], target:'notes' });
 assert.equal(parseContentArgs(['flomo', '--hub', 'https://hub.example.test']).target, 'flomo');
-assert.equal(parseContentArgs([]).target, null, 'no target only shows usage');
+assert.equal(parseContentArgs([]).target, null, 'no explicit target resolves from the saved mode at startup');
+assert.equal(initialTarget(null, null).id, 'notes');
+assert.equal(initialTarget(null, 'flomo').id, 'flomo');
+assert.equal(initialTarget('notes', 'flomo').id, 'notes');
+assert.equal(initialTarget(null, 'invalid').id, 'notes');
+assert.equal(initialTarget(null, '__proto__').id, 'notes');
+assert.throws(() => parseContentArgs(['both']), /notes 或 flomo/);
 assert.throws(() => parseContentArgs(['publish']), /notes 或 flomo/);
 assert.throws(() => parseContentArgs(['notes', 'extra']), /未知参数/);
 assert.throws(() => parseContentArgs(['notes', '--new']), /未知或缺少参数/, 'session control is not exposed');
