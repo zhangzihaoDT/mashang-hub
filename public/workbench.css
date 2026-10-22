@@ -47,3 +47,23 @@
 .note-composer-actions .note-save-secondary:hover:not(:disabled){background:#f1f7fb;border-color:var(--blue)}
 .note-composer-actions .content-primary:hover:not(:disabled){filter:brightness(.92)}
 .content-workspace .composer-buttons{margin-left:auto;justify-content:flex-end}
+
+/* Notes source input: restrained controls and locally decoded previews. */
+.note-input-panel{border-top:1px solid #dce5eb;padding:10px 0 2px;min-width:0}
+.note-input-head{display:flex;gap:10px;align-items:center}.note-input-head button{flex-shrink:0}
+#noteInputStatus{font-size:11px;color:#556270;line-height:1.6}
+.note-attachment-list{display:flex;gap:10px;overflow-x:auto;max-height:150px;padding:8px 0}
+.note-attachment-list:empty{display:none}.note-attachment{flex:0 0 112px;min-width:0;border:1px solid #dce5eb;border-radius:8px;padding:6px;background:#fff;display:grid;gap:4px}
+.note-attachment img{width:98px;height:66px;object-fit:contain;background:#f1f7fb;border-radius:4px}
+.note-attachment span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#556270}
+.note-attachment button{padding:2px 5px;font-size:11px;justify-self:end}
+.note-drop-active{outline:2px solid #6bb6e8;outline-offset:4px}
+@media(max-width:480px){.note-input-head{align-items:flex-start;gap:6px}.note-input-head button{padding:6px 8px}.note-attachment-list{max-height:132px}}
+
+.composer .note-input-panel{padding:10px}
+.composer .note-input-panel button{background:#fff;color:#235977;border:1px solid #bdcdd7;min-height:26px;padding:3px 8px}
+.composer .note-attachment button{min-height:24px;padding:1px 5px;font-size:11px}
+@media(max-width:700px){.content-workspace .composer{max-height:65dvh;overflow-y:auto}.note-attachment img{height:48px}.note-attachment-list{max-height:118px}.note-input-head{gap:8px}}
+
+.note-attachment{align-self:flex-start;grid-template-rows:auto 16px auto}.note-attachment span{line-height:16px}
+@media(max-width:700px){.note-attachment-list{max-height:140px}}

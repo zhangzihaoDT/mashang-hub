@@ -1,3 +1,4 @@
+import { createNoteInput } from './note-input.js';
 import { contentCardHTML, contentCopy } from './content-ui.js';
 import { selectAvailableModel } from './model-selection.js';
 import { transitionTaskState } from "./task-state.js";
@@ -17,6 +18,7 @@ let currentWorkspace = 'service';
 const marketComposerPreference = localStorage.getItem('aksignal-composer-collapsed');
 let marketComposerCollapsed = marketComposerPreference === null ? true : marketComposerPreference === '1';
 let submitting = false;
+let noteInput;
 const linkedContentSession = new URLSearchParams(location.search).get('workspace') === 'publish'
   ? new URLSearchParams(location.search).get('conversation') : null;
 let contentSyncing = false;
@@ -195,14 +197,15 @@ function sessionName(session) { return session?.title || session?.name || sessio
 function updateNoteActions() {
   const active = currentWorkspace === 'publish' && (state.contentMode || 'notes') === 'notes';
   $('#noteComposerActions').classList.toggle('hidden', !active);
-  const typed = $('#prompt').value.trim().length > 0;
+  const typed = $('#prompt').value.trim().length > 0 || Boolean(noteInput?.count);
+  noteInput?.render();
   const card = state.contentCard;
   const hasContent = typed || Boolean(card?.text || state.assistantText);
-  const busy = state.turnActive || submitting;
+  const busy = state.turnActive || submitting || noteInput?.reading;
   const changed = typed && (!card || $('#prompt').value !== card.text);
   const syncBlocked = !changed && Boolean(card && state.operationControl && ['PENDING_APPROVAL','APPROVED','RUNNING','COMPLETED','UNKNOWN'].includes(state.operationControl.status));
   $('#saveNote').disabled = busy || !state.connected || (typed && !state.selectedModel?.available) || !hasContent || (!typed && Boolean(card?.notice));
-  $('#syncNote').disabled = busy || !state.connected || !state.selectedModel?.available || !hasContent || syncBlocked;
+  $('#syncNote').disabled = Boolean(noteInput?.hasSources) || Boolean(card?.localOnly && !typed) || busy || !state.connected || !state.selectedModel?.available || !hasContent || syncBlocked;
 }
 function updateSendAvailability() {
   $('#send').disabled = (state === conversations.aksignal && !latestMarketArtifact() && !state.marketArtifact) || state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
@@ -439,7 +442,7 @@ async function directContentAuthorization(text) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(source)));
   return { targetId: 'notes-flomo', sourceDigest: [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, '0')).join('') };
 }
-async function sendPrompt(text, publicationPreview = false, contentAction = null) {
+async function sendPrompt(text, publicationPreview = false, contentAction = null, media = {}) {
   if (state.turnActive || submitting) return;
   if(state === conversations.aksignal && !bindMarket()) throw new Error("暂无可引用的正式日报");
   submitting = true;
@@ -457,7 +460,7 @@ async function sendPrompt(text, publicationPreview = false, contentAction = null
     if (!publicationPreview && !['save','save-input','edit-save','edit'].includes(contentAction?.action) && !state.selectedModel?.available) throw new Error("请选择可用模型");
     state.operationControl = null; renderPublication();
     const scopedAuthorization = state === conversations.publish ? await directContentAuthorization(text) : null;
-    const response = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/message`, { method: "POST", body: JSON.stringify({ model: state.selectedModel ? { providerID: state.selectedModel.providerID, modelID: state.selectedModel.modelID } : null, workspaceId: state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : null, contentAction, scopedAuthorization, marketArtifactId: state === conversations.aksignal ? state.marketArtifact?.artifactId : undefined, parts: [{ type: "text", text }], confirmationId: state.confirmationId }) });
+    const response = await api(`/api/sessions/${encodeURIComponent(state.session.id)}/message`, { method: "POST", body: JSON.stringify({ model: state.selectedModel ? { providerID: state.selectedModel.providerID, modelID: state.selectedModel.modelID } : null, workspaceId: state === conversations.aksignal ? "aksignal" : state === conversations.publish ? "publish" : null, ...media, contentAction, scopedAuthorization, marketArtifactId: state === conversations.aksignal ? state.marketArtifact?.artifactId : undefined, parts: [{ type: "text", text }], confirmationId: state.confirmationId }) });
     if (response.taskId) { if (response.turnId) state.turnId = response.turnId; applyTaskEvent(response.taskId, "task.accepted"); }
     for (const event of state.earlyEvents.splice(0)) handleServerEvent(event);
     renderDebug();
@@ -523,7 +526,13 @@ function processServerEvent(event) {
   if (event.type === "task.running") { if (!state.pendingPermission) applyTaskEvent(event.taskId, "task.running"); return; }
   if (event.type === "agent.message.delta" && event.taskId === state.activeTaskId) { state.assistantText += event.text || ""; updateRunningLabel("正在生成结果"); return; }
   if (event.type === "agent.message.completed" && event.taskId === state.activeTaskId) { applyTaskEvent(event.taskId, "agent.message.completed"); if (Object.hasOwn(event, "confirmationId")) state.confirmationId = event.confirmationId; if(event.contentCard) state.contentCard = event.contentCard; if(event.operationControl) state.operationControl = event.operationControl; completeAssistant(event.text || state.assistantText, event.actualModel, event.plainText === true); if (event.operationControl) { state.operationControl = event.operationControl; state.reviewedDigest = event.operationControl.digest; renderPublication(); } return; }
-  if (event.type === "task.completed") { state.finishedAt = Date.now(); if (applyTaskEvent(event.taskId, "task.completed")) state.turnActive = false; updateSendAvailability(); return; }
+  if (event.type === "task.completed") {
+    if (state === conversations.publish && state.mediaSubmission && state.contentCard?.localOnly && state.contentCard.notice) {
+      if (currentWorkspace === 'publish' && $('#prompt').value === state.mediaSubmission.text) $('#prompt').value = '';
+      if (state.draft === state.mediaSubmission.text) state.draft = '';
+      state.mediaSubmission = null; noteInput.clear(); autosizePrompt();
+    }
+    state.finishedAt = Date.now(); if (applyTaskEvent(event.taskId, "task.completed")) state.turnActive = false; updateSendAvailability(); return; }
   if (["task.failed", "task.timeout", "task.cancelled", "task.interrupted"].includes(event.type)) { handleTerminal(event); return; }
   if (event.type === "artifact.created" && event.taskId === state.activeTaskId) { state.artifacts = [...state.artifacts.filter((artifact) => artifact.artifactId !== event.artifactId), { ...event, preview: "" }]; renderArtifacts(); pushProcessNote(`已生成 ${event.name || event.path || "文件"}`); return; }
   if (event.type === "permission.requested") { showPermission({ id: event.requestId, request: event.request || {} }); return; }
@@ -534,6 +543,16 @@ optional("#cancel")?.addEventListener("click", async () => { if (!state.activeTa
 function autosizePrompt() { const input = optional("#prompt"); if (!input) return; input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 140)}px`; }
 function syncKeyboardInset() { const vv = window.visualViewport; if (!vv) return; const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)); document.documentElement.style.setProperty("--keyboard-inset", `${inset}px`); document.body.classList.toggle("keyboard-open", inset > 80); }
 const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches;
+noteInput = createNoteInput({ input: $('#prompt'), panel: $('#noteInputPanel'), picker: $('#noteImageFiles'), button: $('#addNoteImage'), list: $('#noteAttachmentList'), status: $('#noteInputStatus'),
+  active: () => currentWorkspace === 'publish' && (state.contentMode || 'notes') === 'notes',
+  busy: () => Boolean(conversations.publish?.turnActive || submitting),
+  changed: () => {
+    if (noteInput?.count && state === conversations.publish && !state.selectedModel?.imageInput) {
+      const vision = state.models.find(model => model.available && model.imageInput);
+      if (vision) { state.selectedModel = vision; renderModelOptions(state.models); pushNotice(`已切换到支持图片的 ${vision.label}`); }
+    }
+    autosizePrompt(); updateNoteActions();
+  }, notice: message => pushNotice(message) });
 $("#promptForm").addEventListener("submit", (event) => { event.preventDefault(); if (currentWorkspace === 'publish' && (state.contentMode || 'notes') === 'notes') { $('#saveNote').click(); return; } const input = $("#prompt"); const text = input.value; if (!text.trim() || $("#send").disabled) return; input.value = ""; autosizePrompt(); sendPrompt(text, false, state.pendingContentAction).catch((error) => { state.taskState = "FAILED"; state.turnActive = false; setStatus("FAILED", `任务提交失败：${error.message}`); pushNotice(`无法提交任务：${error.message}`); }); });
 function editCurrentNote(force = false) {
   const input = $('#prompt');
@@ -548,15 +567,20 @@ $('#noteComposerActions').addEventListener('click', event => {
   if (!button || button.disabled || state.turnActive || submitting) return;
   const action = button.dataset.noteCompose;
   const input = $('#prompt');
-  const typed = Boolean(input.value.trim());
+  const media = noteInput.snapshot();
+  const hasMedia = noteInput.hasSources;
+  const typed = Boolean(input.value.trim()) || hasMedia;
   const text = typed ? input.value : state.contentCard?.text || state.assistantText;
-  if (!text?.trim()) return;
+  if (!text?.trim() && !media.attachments.length) return;
+  if (hasMedia && action !== 'save') return;
   const pending = state.pendingContentAction;
-  const request = typed && pending?.action === 'edit' ? { ref: pending.ref, action: `edit-${action}` }
+  const request = hasMedia ? { action: 'save-input' } : typed && pending?.action === 'edit' ? { ref: pending.ref, action: `edit-${action}` }
     : !typed && state.contentCard ? { ref: state.contentCard.ref, action }
     : { action: `${action}-input` };
-  input.value = ''; autosizePrompt();
-  sendPrompt(text, false, request).catch(() => pushNotice('操作未完成，请检查后再试。'));
+  if (hasMedia) state.mediaSubmission = { text: input.value };
+  else input.value = '';
+  autosizePrompt();
+  sendPrompt(text || '', false, request, media).catch(() => pushNotice('操作未完成，请检查后再试。'));
 });
 $('#resultContent').addEventListener('click', event => {
   const draftAction = event.target.closest('[data-draft-action]')?.dataset.draftAction;
@@ -600,6 +624,7 @@ $('#newSession').addEventListener('click', async () => {
   try {
     state.contentCard = null; state.pendingContentAction = null;
     state.session = await api('/api/sessions', { method:'POST', body:JSON.stringify({title:'mashang-hub'}) });
+    if (state === conversations.publish) { state.mediaSubmission = null; noteInput.clear(); }
     localStorage.setItem(sessionStorageKey(), state.session.id);
     Object.assign(state, {messages:[],artifacts:[],artifactScanText:'',activeTaskId:null,taskState:'IDLE',turnId:null,openCodeSessionId:null,turnActive:false,pendingPermission:null,confirmationId:null,operationControl:null,earlyEvents:[],marketArtifact:null,taskTitle:null,draft:'',assistantText:'',resultPlainText:false,startedAt:null,finishedAt:null});
     $('#prompt').value = ''; renderConversation(); renderMarketBinding(); autosizePrompt();

@@ -30,7 +30,8 @@ export async function createNotesOperation({ root, dataDirectory = join(root, 'd
     const lines = draft.final_note.split('\n');
     const tags = lines.at(-1)?.match(/#[^\s#]+/g) || [];
     return { title: lines[0].replace(/^\*\*|\*\*$/g, ''), body: lines.slice(1, tags.length ? -1 : undefined).join('\n').trim(), tags, text: draft.final_note, ref, digest,
-      notice: draft.localSaved ? '已保存到本地' : '', actions: [...(!draft.localSaved ? [{ id: 'save', label: '保存本地' }] : []), ...(!draft.flomoTaskId ? [{ id: 'sync', label: '同步 Flomo' }] : [])] };
+      localOnly: Boolean(draft.source_id), imageCount: draft.imageCount || 0,
+      notice: draft.localSaved ? (draft.source_id ? `已保存到本地 · 原始资料已保留${draft.imageCount ? ` · ${draft.imageCount} 张原图` : ''}` : '已保存到本地') : '', actions: [...(!draft.localSaved ? [{ id: 'save', label: '保存本地' }] : []), ...(!draft.flomoTaskId && !draft.source_id ? [{ id: 'sync', label: '同步 Flomo' }] : [])] };
   }
   const evidence = async id => {
     const mapping = await state.read(`associations/${id}.json`);
@@ -68,8 +69,10 @@ export async function createNotesOperation({ root, dataDirectory = join(root, 'd
       if (!action && !intent) return null;
       if (task.actor?.kind !== 'user' || !task.actor.authenticated) return { text: '请先登录后保存或同步笔记。' };
       let draft, previous;
+      const hasMedia = Boolean(task.attachments?.length || task.sourceDocuments?.length);
+      if (hasMedia && action?.action !== 'save-input') throw Error('Images and rich input are local Notes only');
       if (['save-input','sync-input'].includes(action?.action)) {
-        if (!task.prompt?.trim()) return { text: '请先输入笔记内容。' };
+        if (!task.prompt?.trim() && !task.attachments?.length) return { text: '请先输入笔记内容。' };
         draft = { sessionId: task.sessionId, original_content: task.prompt, final_note: task.prompt, raw: false, localSaved: false, flomoTaskId: null };
       } else if (action) {
         previous = await readSnapshot(action.ref);
@@ -88,13 +91,25 @@ export async function createNotesOperation({ root, dataDirectory = join(root, 'd
         const final = intent.raw ? original : reuse ? previous.final_note : await generate({ original, prompt: task.prompt, flomo: intent.sync, signal });
         draft = { sessionId: task.sessionId, original_content: original, final_note: final, raw: intent.raw, localSaved: Boolean(reuse && previous.localSaved), flomoTaskId: null };
       }
-      if (signal?.aborted) return { text: '已取消。' };
+      if (hasMedia) {
+        const { saveNoteSources } = await import(pathToFileURL(join(root, 'src/note-assets.mjs')).href);
+        const source = await saveNoteSources(storage, { original_content: task.prompt || '', attachments: task.attachments || [], source_documents: task.sourceDocuments || [] });
+        draft.source_id = source.source_id; draft.extracted_content = ''; draft.imageCount = source.attachments.length;
+      }
+      if (signal?.aborted) return { text: hasMedia ? '已取消整理，原始资料已保存。' : '已取消。' };
       const wantsSave = ['save','save-input','edit-save'].includes(action?.action) || intent?.save;
       const wantsSync = ['sync','sync-input','edit-sync'].includes(action?.action) || intent?.sync;
       if (wantsSave && ['save-input', 'edit-save'].includes(action?.action)) {
-        draft.final_note = normalizeFlomoListSpacing(await generate({ original: draft.final_note, prompt: '保留原意，整理为本地 Markdown 笔记', flomo: false, signal }));
+        try {
+          const result = await generate({ original: draft.final_note, prompt: '保留原意，整理为本地 Markdown 笔记', flomo: false, signal, attachments: task.attachments || [] });
+          if (task.attachments?.length) {
+            if (typeof result?.final_note !== 'string' || typeof result?.extracted_content !== 'string' || !result.extracted_content.trim()) throw Error('Missing image extraction');
+            draft.final_note = normalizeFlomoListSpacing(result.final_note); draft.extracted_content = result.extracted_content;
+          } else draft.final_note = normalizeFlomoListSpacing(result);
+        } catch (error) { if (draft.source_id) error.sourcesSaved = true; throw error; }
         draft.localSaved = false; delete draft.localTaskId;
       }
+      if (wantsSync && draft.source_id) throw Error('Rich Notes cannot be synchronized to Flomo');
       if (wantsSync) {
         const beforeFormatting = draft.final_note;
         draft.final_note = normalizeFlomoListSpacing(draft.final_note);
@@ -107,7 +122,9 @@ export async function createNotesOperation({ root, dataDirectory = join(root, 'd
       if (wantsSave && !draft.localSaved) {
         if (!draft.raw) draft.final_note = normalizeFlomoListSpacing(draft.final_note);
         // Cancellation cannot erase a completed local save; no network is involved.
-        const saved = await notes(storage, { ...draft, target: 'local' });
+        let saved;
+        try { saved = await notes(storage, { ...draft, target: 'local' }); }
+        catch (error) { if (draft.source_id) error.sourcesSaved = true; throw error; }
         draft.localSaved = true; draft.localTaskId = saved.task_id;
       }
       if (wantsSync) {

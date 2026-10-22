@@ -22,6 +22,10 @@ const temp = await mkdtemp('/private/tmp/hub-content-');
 const root = join(temp, 'content'); await mkdir(join(root, 'src'), { recursive: true });
 const dataDir = join(temp, 'data'), entries = join(temp, 'entries'), callsFile = join(temp, 'calls.jsonl');
 const actualNotes = pathToFileURL(join(contentRoot, 'src/notes.mjs')).href;
+await writeFile(join(root, 'src/note-assets.mjs'), `export * from ${JSON.stringify(pathToFileURL(join(contentRoot, 'src/note-assets.mjs')).href)};`);
+const syntheticImage = { type: 'file', mime: 'image/png', filename: 'synthetic.png', url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' };
+const visionModel = { providerID: 'opencode-go', modelID: 'vision' };
+let imageRequests = 0;
 await copyFile(join(contentRoot, 'src/storage.mjs'), join(root, 'src/storage.mjs'));
 await mkdir(join(root, 'skills/flomo-sync/references'), { recursive: true });
 await copyFile(join(contentRoot, 'skills/flomo-sync/references/formatting.md'), join(root, 'skills/flomo-sync/references/formatting.md'));
@@ -36,13 +40,20 @@ const oc = createServer(async (req, res) => {
   if (req.url.startsWith('/event')) { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(': mock\n\n'); streams.add(res); req.on('close', () => streams.delete(res)); return; }
   let body = ''; for await (const chunk of req) body += chunk;
   res.setHeader('content-type', 'application/json');
-  if (req.url.startsWith('/config/providers')) return res.end(JSON.stringify({ providers: { deepseek: { id: 'deepseek', models: { mock: { id: 'mock', name: 'DeepSeek Flash 4.1' } } } } }));
+  if (req.url.startsWith('/config/providers')) return res.end(JSON.stringify({ providers: { deepseek: { id: 'deepseek', models: { mock: { id: 'mock', name: 'DeepSeek Flash 4.1' } } }, 'opencode-go': { id: 'opencode-go', models: { vision: { id: 'vision', name: 'GPT-5.6 Luna', capabilities: { input: { image: true } } } } } } }));
   if (req.url.includes('/message') && req.method === 'POST') {
     const input = JSON.parse(body); assert.deepEqual(input.tools, { '*': false });
     const prompt = input.parts[0].text;
+    const imageParts = input.parts.filter(part => part.type === 'file');
+    if (imageParts.length) {
+      imageRequests++; assert.equal(input.model.modelID, 'vision');
+      for (const part of imageParts) { assert.equal(part.mime, 'image/png'); assert.ok(part.url.startsWith('data:image/png;base64,')); }
+      assert.match(prompt, /extracted_content/);
+      if (prompt.includes('识别失败')) return res.end(JSON.stringify({ parts: [{ type: 'text', text: 'invalid json' }] }));
+    }
     if (prompt.includes('中断')) await new Promise(resolve => setTimeout(resolve, 600));
     const final = `**合成笔记 ${++generation}**\n\n${prompt.includes('超时') ? '超时' : '合成正文 <script>window.attack=1</script>'}\n\n#测试`;
-    return res.end(JSON.stringify({ info: { finish: 'stop' }, parts: [{ type: 'text', text: prompt.startsWith('整理为笔记') ? JSON.stringify({ final_note: final }) : '合成微博草稿' }] }));
+    return res.end(JSON.stringify({ info: { finish: 'stop' }, parts: [{ type: 'text', text: prompt.startsWith('整理为笔记') ? JSON.stringify({ final_note: final, ...(imageParts.length ? { extracted_content: '图片 1：合成截图文字' } : {}) }) : '合成微博草稿' }] }));
   }
   if (req.url.includes('/message')) return res.end(JSON.stringify([{ parts: [{ type: 'text', text: '合成讨论 #测试' }] }]));
   if (req.url.startsWith('/session') && req.method === 'POST') return res.end('{"id":"ses_content_mock"}');
@@ -147,6 +158,41 @@ try {
   assert.equal(generation, countBeforeSpacing, 'list whitespace needs no model retry');
   assert.equal((await latestControl(spacedSession)).status, 'PENDING_APPROVAL');
   assert.equal((await calls()).length, 3, 'format preparation cannot send externally');
+  // Image bytes traverse Browser/HTTP → Hub → Worker → model; sources persist first.
+  const mediaSession = await session();
+  const mediaSaved = await submit(mediaSession, '', { action:'save-input' }, { attachments:[syntheticImage], model:visionModel });
+  assert.equal(imageRequests, 1);
+  assert.equal(mediaSaved.card.localOnly, true); assert.equal(mediaSaved.card.imageCount, 1);
+  assert.match(mediaSaved.card.notice, /1 张原图/);
+  assert.ok(!mediaSaved.card.actions.some(action => action.id === 'sync'));
+  const mediaRecords = await Promise.all((await readdir(entries)).filter(name => name.endsWith('.json')).map(name => readFile(join(entries,name),'utf8').then(JSON.parse)));
+  const imageRecord = mediaRecords.find(record => record.payload.source_id);
+  assert.equal(imageRecord.payload.original_content, ''); assert.equal(imageRecord.payload.extracted_content, '图片 1：合成截图文字');
+  assert.match(await readFile(join(entries,imageRecord.note_id+'.md'),'utf8'), /!\[图片 1\]\(assets\//);
+  const sourceCount = (await readdir(join(entries,'sources'))).length;
+  async function failedMedia(text, extra) {
+    const sess = await session();
+    const response = await api(`/api/sessions/${sess.id}/message`, { workspaceId:'publish', parts:[{type:'text',text}], contentAction:{action:'save-input'}, ...extra });
+    assert.equal(response.status,202);
+    return until(async () => { const t=(await api(`/api/tasks/${response.data.taskId}`)).data; return t.status === 'FAILED' && t; });
+  }
+  await failedMedia('识别失败，原始资料保留', { attachments:[syntheticImage], model:visionModel });
+  assert.equal((await readdir(join(entries,'sources'))).length, sourceCount+1);
+  const requestsBeforeUnsupported = imageRequests;
+  await failedMedia('当前模型不支持图片', { attachments:[syntheticImage], model:{ providerID:'deepseek', modelID:'mock' } });
+  assert.equal(imageRequests, requestsBeforeUnsupported, 'unsupported image model must not receive a generation request');
+  assert.equal((await readdir(join(entries,'sources'))).length, sourceCount+2);
+  await failedMedia('不可同步图文', { attachments:[syntheticImage], contentAction:{action:'sync-input'}, model:visionModel });
+  const tampered = await session();
+  assert.equal((await api(`/api/sessions/${tampered.id}/message`, { attachments:[{...syntheticImage,url:'https://example.com/remote.png'}] })).status,400);
+  assert.equal((await api(`/api/sessions/${tampered.id}/message`, { attachments:Array(7).fill(syntheticImage) })).status,400);
+  const html = '<h2>合成富文本</h2><p><b>保留结构</b><script>neverExecute()</script></p>';
+  const richSaved = await submit(await session(), '## 合成富文本\n\n**保留结构**', { action:'save-input' }, { sourceDocuments:[{mime:'text/html',text:html}] });
+  assert.equal(richSaved.card.localOnly,true);
+  const sources = await Promise.all((await readdir(join(entries,'sources'))).map(name => readFile(join(entries,'sources',name),'utf8').then(JSON.parse)));
+  assert.ok(sources.some(source => source.payload.source_documents[0]?.text === html));
+  assert.equal((await calls()).length,3,'no media flow may write to Flomo');
+  console.log('Notes media: real transport, vision parts, image-only save, immutable sources, extraction failure, model capability refusal, rich source and Flomo isolation passed');
   if (process.env.CONTENT_CLI === '1') {
     if (process.env.CONTENT_BROWSER === '1') {
       const { chromium } = createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE || 'playwright');
@@ -230,6 +276,53 @@ try {
     await page.getByText('已保存到本地', { exact: true }).last().waitFor();
     assert.equal((await calls()).length, before + 1);
     assert.deepEqual(errors, []);
+    // Native file input, clipboard HTML/image, drop, remove, Enter and failure retention.
+    await page.locator('#prompt').fill('截图说明');
+    await page.locator('#noteImageFiles').setInputFiles({ name:'synthetic.png', mimeType:'image/png', buffer:Buffer.from(syntheticImage.url.split(',')[1],'base64') });
+    await page.locator('.note-attachment').waitFor();
+    assert.equal(await page.locator('#syncNote').isEnabled(),false);
+    assert.equal(await page.locator('#modelSelect').inputValue(),'luna');
+    await page.locator('.note-attachment button').click(); assert.equal(await page.locator('.note-attachment').count(),0);
+    await page.locator('#prompt').fill('');
+    await page.locator('#prompt').evaluate((el, url) => {
+      const bytes=Uint8Array.from(atob(url.split(',')[1]),c=>c.charCodeAt(0)); const data=new DataTransfer();
+      data.items.add(new File([bytes],'pasted.png',{type:'image/png'}));
+      el.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));
+    },syntheticImage.url);
+    await until(() => page.locator('#saveNote').isEnabled());
+    await page.locator('#prompt').evaluate(el => {
+      const data=new DataTransfer(); data.setData('text/html','<h2>截图资料</h2><p><strong>重点</strong> <a href="https://example.com/note">来源</a></p><script>window.clipboardAttack=1</script>');
+      el.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:data}));
+    });
+    assert.match(await page.locator('#prompt').inputValue(), /## 截图资料/);
+    assert.match(await page.locator('#prompt').inputValue(), /\*\*重点\*\*/);
+    assert.equal(await page.evaluate(() => window.clipboardAttack),undefined);
+    for (const width of [1440,390,320]) {
+      await page.setViewportSize({width,height:900}); await page.waitForTimeout(180);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
+      assert.ok(await page.locator('#saveNote').evaluate(el => { const b=el.getBoundingClientRect(); return b.bottom <= innerHeight && b.top >= 0; }), 'save button is within viewport');
+      await page.screenshot({path:`.local/content-preview/notes-input-${width}.png`,fullPage:false});
+    }
+    await page.locator('#saveNote').click();
+    await until(async () => await page.locator('.note-attachment').count() === 0);
+    await page.locator('.content-feedback').filter({hasText:'已保存到本地 · 原始资料已保留 · 1 张原图'}).last().waitFor();
+    assert.equal((await calls()).length,before+1);
+    await page.locator('#prompt').fill('识别失败，保留输入');
+    await page.locator('#promptForm').evaluate((el,url) => {
+      const data=new DataTransfer();data.items.add(new File([Uint8Array.from(atob(url.split(',')[1]),c=>c.charCodeAt(0))],'dropped.png',{type:'image/png'}));
+      el.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:data}));
+    },syntheticImage.url);
+    await until(() => page.locator('#saveNote').isEnabled()); await page.locator('#saveNote').click();
+    await until(() => page.locator('#saveNote').isEnabled());
+    assert.equal(await page.locator('.note-attachment').count(),1);
+    assert.equal(await page.locator('#prompt').inputValue(),'识别失败，保留输入');
+    await page.locator('#runState').filter({hasText:'原始资料已保存，笔记整理未完成'}).waitFor();
+    await page.locator('#prompt').fill(''); // image-only Enter must bypass textarea required validation
+    await page.locator('#prompt').press('Enter');
+    await until(async () => await page.locator('.note-attachment').count() === 0);
+    assert.equal((await calls()).length,before+1);
+    assert.deepEqual(errors,[]);
+    console.log('Notes browser: picker/paste/drop, previews/removal, inert rich text, image-only Enter, failed draft retention and responsive layouts passed');
     console.log('Content desktop + 390/320 mobile: two Notes actions, no Send or Edit, organized local Markdown save, confirmed sync, Enter local save, reload and no overflow passed');
   }
 } finally {

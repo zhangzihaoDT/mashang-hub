@@ -5,5 +5,6 @@ export function contentCard(value) {
   const string = (v, max) => typeof v === 'string' ? v.slice(0, max) : '';
   return { ref: value.ref, digest: value.digest, title: string(value.title, 200), body: value.body, text: value.text,
     tags: Array.isArray(value.tags) ? value.tags.filter(v => typeof v === 'string').slice(0, 30).map(v => v.slice(0, 100)) : [],
+    localOnly: value.localOnly === true, imageCount: Number.isInteger(value.imageCount) && value.imageCount >= 0 && value.imageCount <= 6 ? value.imageCount : 0,
     notice: string(value.notice, 200), actions: Array.isArray(value.actions) ? value.actions.filter(a => /^[a-z][a-z-]{0,30}$/.test(a?.id) && typeof a.label === 'string').slice(0, 4).map(a => ({ id: a.id, label: a.label.slice(0, 40) })) : [] };
 }

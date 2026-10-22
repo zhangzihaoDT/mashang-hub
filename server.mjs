@@ -1,3 +1,4 @@
+import { inputAttachments } from './public/input-attachments.js';
 import { contentCard } from './server/content-preview.mjs';
 import { htmlPreviewPolicy } from './server/artifact-preview.mjs';
 import { approvalProof } from './server/operation-proof.mjs';
@@ -642,7 +643,22 @@ const server = createServer(async (req, res) => {
     const session = sessions.get(message[1]);
     if (!session) return json(res, 404, { error: "Hub Session not found" });
     if (!activeWorker?.workerId || activeWorker.readyState !== 1) return json(res, 503, { error: "Mac Worker is offline or registering" });
-    const input = await body(req);
+    let input, media;
+    try {
+      const chunks = []; let size = 0;
+      for await (const chunk of req) {
+        size += chunk.length;
+        if (size > 18 * 1024 * 1024) { json(res, 413, { error: '输入超过 18 MiB，请减少附件。' }); req.resume(); return; }
+        chunks.push(chunk);
+      }
+      input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (!input || typeof input !== 'object') throw Error('Invalid input');
+      media = inputAttachments(input);
+      if (media.attachments.length || media.sourceDocuments.length) {
+        if (!accessToken || !authenticated(req)) return json(res, 401, { error: '附件输入需要登录。' });
+        if (!Array.isArray(input.parts) || input.parts.length !== 1 || input.parts[0]?.type !== 'text' || typeof input.parts[0].text !== 'string' || input.parts[0].text.length > 200000) throw Error('Invalid source text');
+      }
+    } catch { return json(res, 400, { error: '输入或附件无效，请检查文件类型和大小。' }); }
     const rawWorkspace = input.workspaceId;
     const workspaceId = rawWorkspace == null || rawWorkspace === "" ? null : sanitizeWorkspaceId(rawWorkspace);
     if (rawWorkspace != null && rawWorkspace !== "" && workspaceId === null) return json(res, 400, { error: "Invalid workspaceId" });
@@ -663,7 +679,7 @@ const server = createServer(async (req, res) => {
     taskStore.saveSession(session);
     createTurn({ conversationId: session.id, turnId, taskId: task.taskId, model: task.model, workspaceId });
     console.log(`task created: ${task.taskId} conversation=${session.id} turn=${turnId} workspace=${workspaceId || "default"}`);
-    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, attemptId: task.attemptId, dispatchId: task.dispatchId, policy: task.policy, sessionId: session.id, turnId, contentAction: input.contentAction && (input.contentAction.ref === undefined || /^[a-f0-9-]{36}$/.test(input.contentAction.ref)) && /^[a-z][a-z-]{0,30}$/.test(input.contentAction.action) ? { ...(input.contentAction.ref ? { ref: input.contentAction.ref } : {}), action: input.contentAction.action } : null, marketArtifactId: /^runtime_[a-f0-9]{64}$/.test(input.marketArtifactId || "") ? input.marketArtifactId : null, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
+    const dispatched = sendWorker({ type: "task.create", taskId: task.taskId, attemptId: task.attemptId, dispatchId: task.dispatchId, policy: task.policy, sessionId: session.id, turnId, ...media, contentAction: input.contentAction && (input.contentAction.ref === undefined || /^[a-f0-9-]{36}$/.test(input.contentAction.ref)) && /^[a-z][a-z-]{0,30}$/.test(input.contentAction.action) ? { ...(input.contentAction.ref ? { ref: input.contentAction.ref } : {}), action: input.contentAction.action } : null, marketArtifactId: /^runtime_[a-f0-9]{64}$/.test(input.marketArtifactId || "") ? input.marketArtifactId : null, prompt: input.parts?.find((part) => part.type === "text")?.text || "", actor: { kind: "user", authenticated: Boolean(accessToken) && authenticated(req) }, confirmationId: typeof input.confirmationId === "string" && /^[a-f0-9]{64}$/.test(input.confirmationId) ? input.confirmationId : null, model: input.model, workspaceId });
     if (!dispatched) { console.log(`task dispatch failed: ${task.taskId} session=${session.id}`); finalizeTask(task, { event: "task.failed", status: "FAILED", reason: REASONS.OPENCODE_ERROR, error: "Mac Worker is offline" }); return json(res, 503, { error: "Mac Worker is offline", taskId: task.taskId }); }
     console.log(`task dispatched to worker: ${task.taskId} session=${session.id} worker=${activeWorker.workerId}`);
     broadcast({ type: 'task.created', ...publicTask(task) });

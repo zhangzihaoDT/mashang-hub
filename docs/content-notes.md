@@ -84,3 +84,17 @@ Notes 不再提供“发送”或“修改”按钮。输入区右下角仅有�
 迁移项目目录后，复用执行会话前检查其目录绑定；旧目录会话保留，当前 Hub 对话映射到正确目录的新执行会话。空返回和格式失败使用脱敏业务提示，失败任务不自动重新生成或发送。
 
 Notes 卡片只展示内容和独立保存/同步结果。Hub 只转发动作描述，不直接访问文件或 webhook；外部同步继续经过审批和持久化防重。
+
+## Web 图文笔记（2026-10-22）
+
+Notes 输入支持 PNG/JPEG/WebP 文件选择、粘贴截图、拖放，以及基础 HTML 富文本粘贴转 Markdown。图片预览可移除；最多 6 张，单张 5 MiB，总计 12 MiB。网页引用图片不会被自动下载。原 HTML 只作为惰性源资料保存。
+
+浏览器发送通用 attachments / sourceDocuments，Hub 进行有界校验并转交 Worker；Hub 不读取 Notes 文件。请求上限 18 MiB，反向代理也需允许相应大小。只有已登录用户可提交附件。Worker 当前仅接入 Content 本地 save-input 动作；其他工作空间、发布、Flomo 路径明确拒绝附件。
+
+Worker 在 Content 的同一数据锁下先保存 sources/ 和 assets/，再调用模型。使用已配置模型的 capabilities.input.image 或 modalities.input 判断图片能力，浏览器可自动选择已有图片模型，不修改模型配置。不支持图片或识别失败时，原始资料保留，浏览器在当前页面保留草稿。刷新或关闭页面不保证保留尚未保存的草稿。
+
+成功后本地笔记 JSON 分开记录原文、识别结果与整理稿，Markdown 引用原图。图文卡片只提供本地结果，不提供 Flomo 同步。原有文字笔记和 Flomo 流程不变。
+
+需要与 Content 的 src/note-assets.mjs 及扩展 notes.mjs 一起更新。详细持久化契约见 Content docs/notes-rich-input.md。未自动部署；真实视觉模型识别质量及线上网关限制未验证。
+
+自动化入口：npm run test:content（本地 HTTP → Hub → Worker → Content，mock 模型和 webhook）；CONTENT_BROWSER=1 npm run test:content 增加图片选择/粘贴/拖放、惰性 HTML、失败保留、纯图片 Enter 与桌面/移动布局验收。
