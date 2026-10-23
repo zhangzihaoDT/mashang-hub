@@ -18,7 +18,7 @@ export const HELP = `用法：
 未指定模式时恢复上次模式，首次默认 Notes。
 /notes、/flomo 随时切换，未提交内容保留。
 直接输入内容，回车即整理并保存/同步。
-多行可直接粘贴，按 Enter 提交。Ctrl+C 退出。
+多行可直接粘贴，按 Enter 提交。退格可删除粘贴块，Ctrl+U 清空草稿。Ctrl+C 退出。
 
 环境：HUB_URL、HUB_ACCESS_TOKEN、MASHANG_CLI_STATE_DIR`;
 
@@ -206,12 +206,12 @@ export async function runContent(args, env = process.env) {
 
   const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   let rl, closed = false, active = null, pendingPaste = null, pastePrefix = '';
-  let pendingLabels = [], ignoreEmptyUntil = 0;
+  let pendingParts = [], ignoreEmptyUntil = 0;
   let retry = null, commandQueue = Promise.resolve(), eventsReady = false, resultEndpointMissing = false;
   const liveResults = new Map(), terminalErrors = new Map();
   function renderPrompt() {
     if (!tty || !rl || rl.closed) return;
-    const labels = pendingPaste !== null ? pendingLabels.join('') : '';
+    const labels = pendingPaste !== null ? pendingParts.map(part => part.label).join('') : '';
     rl.setPrompt(labels ? `${target.prompt}${labels} ` : target.prompt);
     rl.prompt(true);
   }
@@ -442,8 +442,8 @@ export async function runContent(args, env = process.env) {
     if (RETIRED_COMMANDS.has(command)) { say('直接输入或粘贴内容，按 Enter 提交。'); return; }
     if (active) {
       if (command) {
-        pendingPaste = appendPending(pendingPaste, '', line);
-        pendingLabels.push(terminalText(line));
+        pendingParts.push({ text: line, label: terminalText(line), pasted: false });
+        refreshPending();
       }
       if (pendingPaste !== null) say('上一笔仍在整理；未提交内容已保留，完成后按 Enter 提交。', { block: true });
       return;
@@ -453,7 +453,7 @@ export async function runContent(args, env = process.env) {
       // Ignore that boundary newline, but keep a later deliberate Enter.
       if (!line.trim() && Date.now() < ignoreEmptyUntil) { ignoreEmptyUntil = 0; return; }
       ignoreEmptyUntil = 0;
-      const pasted = pendingPaste; pendingPaste = null; pendingLabels = [];
+      const pasted = pendingPaste; pendingPaste = null; pendingParts = [];
       resetPrompt();
       await submitContent(line.trim() ? `${pasted}\n${line}` : pasted);
       return;
@@ -474,6 +474,33 @@ export async function runContent(args, env = process.env) {
     for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) lines++;
     return `[pasted~${lines}${lines === 1 ? 'line' : 'lines'}]`;
   }
+  function refreshPending() {
+    pendingPaste = pendingParts.length ? pendingParts.map(part => part.text).join('\n') : null;
+    ignoreEmptyUntil = 0;
+  }
+  // The prompt renders collapsed pieces, so readline cannot edit them itself.
+  // Remove paste blocks atomically and move adjacent typed text back into the
+  // editable line. One list owns both the visible labels and submitted text.
+  function editPending(key) {
+    if (!tty || !key || key.meta) return false;
+    if (key.ctrl && key.name === 'u') {
+      pendingParts = [];
+      refreshPending();
+      rl.write(null, { ctrl: true, name: 'a' });
+      rl.write(null, { ctrl: true, name: 'k' });
+      renderPrompt();
+      return true;
+    }
+    if (key.name !== 'backspace' || key.ctrl || rl.cursor !== 0 || !pendingParts.length) return false;
+    const removed = pendingParts.pop();
+    let restored = removed.pasted ? '' : removed.text;
+    if (removed.pasted && pendingParts.at(-1)?.pasted === false) restored = pendingParts.pop().text;
+    refreshPending();
+    renderPrompt();
+    if (restored) rl.write(restored);
+    if (!removed.pasted) rl.write(null, { name: 'backspace' });
+    return true;
+  }
   const updatePastePrompt = renderPrompt;
   const resetPrompt = renderPrompt;
   function finishPaste(text) {
@@ -481,8 +508,8 @@ export async function runContent(args, env = process.env) {
     const normalized = String(text ?? '').replace(/\r\n?/g, '\n').replace(/\n+$/, '');
     const combined = appendPending(pendingPaste, prefix, text);
     if (combined === pendingPaste) return;
-    if (prefix) pendingLabels.push(terminalText(prefix));
-    if (normalized.trim()) pendingLabels.push(pasteMarker(normalized));
+    if (prefix) pendingParts.push({ text: prefix, label: terminalText(prefix), pasted: false });
+    if (normalized) pendingParts.push({ text: normalized, label: pasteMarker(normalized), pasted: true });
     pendingPaste = combined;
     ignoreEmptyUntil = Date.now() + 80;
     if (tty) updatePastePrompt();
@@ -496,13 +523,14 @@ export async function runContent(args, env = process.env) {
   const originalEmit = process.stdin.emit;
   const parser = createPasteParser({
     onStart() {
-      pastePrefix = tty ? (rl?.line || '') : '';
+      pastePrefix = tty ? rl.line.slice(0, rl.cursor) : '';
       if (pastePrefix) rl.write(null, { ctrl: true, name: 'u' });
     },
     onData(text) { originalEmit.call(process.stdin, 'data', text); },
     onPaste(text) { finishPaste(text); },
   });
   process.stdin.emit = function (event, ...args) {
+    if (event === 'keypress' && editPending(args[1])) return true;
     if (event !== 'data') return originalEmit.apply(this, [event, ...args]);
     parser.write(args[0]);
     return true;
@@ -519,7 +547,7 @@ export async function runContent(args, env = process.env) {
 
   try { await connectEvents(); }
   catch (error) { cleanupPaste(); rl.close(); throw error; }
-  say(`${intro}\n/notes、/flomo 随时切换。多行可直接粘贴，按 Enter 提交。Ctrl+C 退出。`, { block: true });
+  say(`${intro}\n/notes、/flomo 随时切换。多行可直接粘贴，按 Enter 提交。退格可删除粘贴块，Ctrl+U 清空草稿。Ctrl+C 退出。`, { block: true });
 
   const previousTaskId = client.profile.lastTaskId;
   if (previousTaskId && client.profile.lastReportedTaskId !== previousTaskId) {

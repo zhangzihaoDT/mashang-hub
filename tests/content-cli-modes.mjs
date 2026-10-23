@@ -120,6 +120,61 @@ try {
   await send('尾部', '✓ 已同步到 Flomo');
   lastSubmission('flomo', '前缀\n第一行\n第二行\n中间\n第三行\n第四行\n尾部');
 
+  // Real keypresses must edit the submitted body, not just its display.
+  // Send editing keys separately, as a terminal does, to avoid readline's
+  // bulk-input handling interpreting a chunk as pasted literal text.
+  async function key(value) {
+    cli.stdin.write(value);
+    await sleep(30);
+  }
+  async function paste(text) {
+    await key('\x1b[200~' + text + '\x1b[201~');
+    await sleep(100);
+  }
+  await switchTo('notes');
+  await key('普通文字X'); await key('\x7f');
+  await send('', '✓ 已保存到本地'); lastSubmission('notes', '普通文字');
+
+  await key('前缀'); await paste('应删除的块\n第二行');
+  await key('尾部X'); await key('\x7f');
+  await send('', '✓ 已保存到本地');
+  lastSubmission('notes', '前缀\n应删除的块\n第二行\n尾部');
+
+  await key('前缀X'); await paste('删除整个块');
+  await key('\x7f'); // remove the block and restore the prefix
+  await key('\x7f'); // edit the restored prefix
+  await key('新尾部');
+  await send('', '✓ 已保存到本地'); lastSubmission('notes', '前缀新尾部');
+
+  await paste('保留的块'); await key('中间X'); await paste('删除的块');
+  await key('\x7f'); await key('\x7f');
+  await send('', '✓ 已保存到本地'); lastSubmission('notes', '保留的块\n中间');
+
+  await paste('全部删除一'); await paste('全部删除二');
+  const beforeDelete = submissions.length;
+  await key('\x7f'); await key('\x08'); await key('\r');
+  assert.equal(submissions.length, beforeDelete, 'Enter after deleting every block never submits');
+  assert.ok(output.trimEnd().endsWith('notes ›'), 'deleted markers disappear');
+  await send('删除后新记录', '✓ 已保存到本地'); lastSubmission('notes', '删除后新记录');
+
+  await paste('切换后删除'); await send('/flomo', '已切换到 Flomo');
+  await key('\x7f');
+  await send('切换后新内容', '✓ 已同步到 Flomo'); lastSubmission('flomo', '切换后新内容');
+
+  await paste('清空第一块'); await key('中间文字'); await paste('清空第二块');
+  await key('尾部'); await key('\x1b[D'); await key('\x15');
+  assert.ok(output.trimEnd().endsWith('flomo ›'), 'Ctrl+U clears the whole draft even with a suffix');
+  const beforeClear = submissions.length;
+  await key('\r'); assert.equal(submissions.length, beforeClear);
+  await send('清空后新内容', '✓ 已同步到 Flomo'); lastSubmission('flomo', '清空后新内容');
+
+  // A paste at the cursor must not duplicate the untouched right-hand suffix.
+  await key('左右'); await key('\x1b[D'); await paste('中间粘贴');
+  await send('', '✓ 已同步到 Flomo'); lastSubmission('flomo', '左\n中间粘贴\n右');
+  await key('左右'); await key('\x1b[D'); await paste('移除中间粘贴');
+  await key('\x7f');
+  await send('', '✓ 已同步到 Flomo'); lastSubmission('flomo', '左右');
+
   // A running submission and its eventual result retain their original target.
   nextOutcome = 'RUNNING';
   await send('运行中的 Flomo', '正在整理并同步');
@@ -131,8 +186,9 @@ try {
   running.status = 'COMPLETED';
   await until(() => output.includes('标题：合成标题\n\nnotes › 忙时输入的草稿'));
   assert.equal(submissions.length, count, 'buffered content waits for Enter');
-  await send('', '✓ 已保存到本地');
-  lastSubmission('notes', '忙时输入的草稿');
+  await key('\x7f');
+  await send('修改', '✓ 已保存到本地');
+  lastSubmission('notes', '忙时输入的草修改');
 
   // Both directions: failed text retries use the original action and scope.
   for (const mode of ['notes', 'flomo']) {
