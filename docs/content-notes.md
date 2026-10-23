@@ -98,3 +98,9 @@ Worker 在 Content 的同一数据锁下先保存 sources/ 和 assets/，再调�
 需要与 Content 的 src/note-assets.mjs 及扩展 notes.mjs 一起更新。详细持久化契约见 Content docs/notes-rich-input.md。未自动部署；真实视觉模型识别质量及线上网关限制未验证。
 
 自动化入口：npm run test:content（本地 HTTP → Hub → Worker → Content，mock 模型和 webhook）；CONTENT_BROWSER=1 npm run test:content 增加图片选择/粘贴/拖放、惰性 HTML、失败保留、纯图片 Enter 与桌面/移动布局验收。
+
+## Flomo 粘贴文字修复（2026-10-23）
+
+网页复制的文字通常同时带有 HTML 剪贴板数据。仅有富文本来源时，“同步 Flomo”仍可使用：发送编辑区转换后的文字，按原有流程整理、预览、确认，不将原始 HTML 作为附件转交同步操作。“保存本地”仍保留富文本原始资料；实际图片附件及已保存的图文笔记仍仅支持本地保存。用户清空编辑区时，同时清除旧的富文本来源，保留独立添加的图片。
+
+浏览器回归覆盖富文本粘贴后的按钮可用性、清空草稿、同步请求只含文字、确认前不发送、确认后仅发送一次，以及原有图文保存与图片同步限制。改动只涉及浏览器输入处理，Worker 的来源校验与外部写入审批不变。

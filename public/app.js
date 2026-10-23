@@ -205,7 +205,7 @@ function updateNoteActions() {
   const changed = typed && (!card || $('#prompt').value !== card.text);
   const syncBlocked = !changed && Boolean(card && state.operationControl && ['PENDING_APPROVAL','APPROVED','RUNNING','COMPLETED','UNKNOWN'].includes(state.operationControl.status));
   $('#saveNote').disabled = busy || !state.connected || (typed && !state.selectedModel?.available) || !hasContent || (!typed && Boolean(card?.notice));
-  $('#syncNote').disabled = Boolean(noteInput?.hasSources) || Boolean(card?.localOnly && !typed) || busy || !state.connected || !state.selectedModel?.available || !hasContent || syncBlocked;
+  $('#syncNote').disabled = Boolean(noteInput?.count) || Boolean(card?.localOnly && !typed) || busy || !state.connected || !state.selectedModel?.available || !hasContent || syncBlocked;
 }
 function updateSendAvailability() {
   $('#send').disabled = (state === conversations.aksignal && !latestMarketArtifact() && !state.marketArtifact) || state.turnActive || submitting || !state.connected || !state.selectedModel?.available;
@@ -567,18 +567,20 @@ $('#noteComposerActions').addEventListener('click', event => {
   if (!button || button.disabled || state.turnActive || submitting) return;
   const action = button.dataset.noteCompose;
   const input = $('#prompt');
-  const media = noteInput.snapshot();
-  const hasMedia = noteInput.hasSources;
+  // Clipboard HTML is local source material. Sync only the visible converted
+  // text; actual images remain local-only and must never be silently dropped.
+  if (action !== 'save' && noteInput.count) return;
+  const media = action === 'save' ? noteInput.snapshot() : {};
+  const hasMedia = action === 'save' && noteInput.hasSources;
   const typed = Boolean(input.value.trim()) || hasMedia;
   const text = typed ? input.value : state.contentCard?.text || state.assistantText;
-  if (!text?.trim() && !media.attachments.length) return;
-  if (hasMedia && action !== 'save') return;
+  if (!text?.trim() && !media.attachments?.length) return;
   const pending = state.pendingContentAction;
   const request = hasMedia ? { action: 'save-input' } : typed && pending?.action === 'edit' ? { ref: pending.ref, action: `edit-${action}` }
     : !typed && state.contentCard ? { ref: state.contentCard.ref, action }
     : { action: `${action}-input` };
   if (hasMedia) state.mediaSubmission = { text: input.value };
-  else input.value = '';
+  else { input.value = ''; noteInput.clear(); }
   autosizePrompt();
   sendPrompt(text || '', false, request, media).catch(() => pushNotice('操作未完成，请检查后再试。'));
 });

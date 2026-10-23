@@ -49,7 +49,7 @@ export function createNoteInput({ input, panel, picker, button, list, status, ac
       remove.onclick = () => { attachments.splice(index, 1); render(); changed(); };
       item.append(image, name, remove); list.append(item);
     }
-    status.textContent = reading ? '正在读取图片…' : `${attachments.length ? `${attachments.length} 张图片 · ` : ''}${sourceDocuments.length ? '已保留富文本原始资料 · ' : ''}支持粘贴、拖入图片，最多 6 张，单张 5 MiB。图片仅保存到本地笔记。`;
+    status.textContent = reading ? '正在读取图片…' : `${attachments.length ? `${attachments.length} 张图片 · ` : ''}${sourceDocuments.length ? '已保留富文本原始资料供本地保存；同步 Flomo 仅发送整理后的文字。' : ''}支持粘贴、拖入图片，最多 6 张，单张 5 MiB。图片仅保存到本地笔记。`;
   };
   const add = async files => {
     if (busy() || reading) return;
@@ -71,6 +71,11 @@ export function createNoteInput({ input, panel, picker, button, list, status, ac
   };
   button.onclick = () => picker.click();
   picker.onchange = () => { const files = [...picker.files]; picker.value = ''; void add(files); };
+  input.addEventListener('input', () => {
+    if (active() && !busy() && !reading && !input.value.trim() && sourceDocuments.length) {
+      sourceDocuments = []; render(); changed();
+    }
+  });
   input.addEventListener('paste', event => {
     if (!active()) return;
     if (busy() || reading) { event.preventDefault(); return; }

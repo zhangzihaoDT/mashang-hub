@@ -322,6 +322,42 @@ try {
     await until(async () => await page.locator('.note-attachment').count() === 0);
     assert.equal((await calls()).length,before+1);
     assert.deepEqual(errors,[]);
+    // Browser text selections commonly carry HTML. Only actual image attachments
+    // should prevent sending the converted text through the normal approval flow.
+    await page.locator('#newSession').click();
+    await page.waitForFunction(() => !document.querySelector('#prompt').readOnly && document.querySelector('#prompt').value === '');
+    const pasteRichText = () => page.locator('#prompt').evaluate(el => {
+      const data = new DataTransfer();
+      data.setData('text/plain', '粘贴文字同步回归 #测试');
+      data.setData('text/html', '<p><strong>粘贴文字同步回归</strong></p><p>#测试</p><script>window.clipboardAttack=1</script>');
+      el.dispatchEvent(new ClipboardEvent('paste', { bubbles:true, cancelable:true, clipboardData:data }));
+    });
+    await pasteRichText();
+    assert.equal(await page.locator('#syncNote').isEnabled(), true, 'HTML clipboard text can be synchronized');
+    assert.match(await page.locator('#noteInputStatus').textContent(), /富文本/);
+    await page.locator('#prompt').fill('');
+    assert.doesNotMatch(await page.locator('#noteInputStatus').textContent(), /已保留富文本/, 'clearing the draft removes stale HTML sources');
+    await pasteRichText();
+    const syncRequests = [];
+    page.on('request', request => {
+      if (request.method() === 'POST' && /\/api\/sessions\/[^/]+\/message$/.test(request.url())) syncRequests.push(request.postDataJSON());
+    });
+    const beforeRichSync = (await calls()).length;
+    await page.locator('#syncNote').click();
+    await page.locator('#approvePublication').waitFor();
+    assert.equal(syncRequests.length, 1);
+    assert.equal(syncRequests[0].contentAction.action, 'sync-input');
+    assert.match(syncRequests[0].parts[0].text, /\*\*粘贴文字同步回归\*\*/);
+    assert.equal(syncRequests[0].sourceDocuments?.length || 0, 0, 'raw HTML is not sent to the Flomo operation');
+    assert.equal(syncRequests[0].attachments?.length || 0, 0);
+    assert.equal((await calls()).length, beforeRichSync, 'pasting and previewing never sends to Flomo');
+    assert.doesNotMatch(await page.locator('#noteInputStatus').textContent(), /已保留富文本/);
+    await page.locator('#approvePublication').click();
+    await page.getByText('已同步到 Flomo', { exact:true }).waitFor();
+    assert.equal((await calls()).length, beforeRichSync + 1);
+    assert.equal(await page.evaluate(() => window.clipboardAttack), undefined);
+    assert.deepEqual(errors,[]);
+    console.log('Flomo clipboard regression: HTML text preview/approval, text-only request, stale source cleanup and single mock delivery passed');
     console.log('Notes browser: picker/paste/drop, previews/removal, inert rich text, image-only Enter, failed draft retention and responsive layouts passed');
     console.log('Content desktop + 390/320 mobile: two Notes actions, no Send or Edit, organized local Markdown save, confirmed sync, Enter local save, reload and no overflow passed');
   }
