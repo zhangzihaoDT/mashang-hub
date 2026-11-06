@@ -1,0 +1,269 @@
+--- a/README.md
++++ b/README.md
+@@ -135,7 +135,7 @@
+ mashang logs [id] [--lines N] [--follow] [--all] [--json]
+ ```
+ 
+-Services: `fetch`, `miit`, `myknbase`, `scheduler`. Operations: `daily`, `allupdate`.
++Services include `fetch`, `miit`, and `scheduler`. Operations: `daily`, `allupdate`.
+ 
+ Safety model:
+ 
+@@ -143,7 +143,7 @@
+ - `up` is a no-op when the canonical process is already running, so a stale process is never "re-legitimized". If only a legacy process exists, `up` warns and starts the canonical entry; `down` refuses to stop legacy-only processes.
+ - Instances started by `mashang` are tracked under `MASHANG_RUNTIME_DIR` (default `<hub>/.local/runtime/`) and stopped by process group. `status` marks untracked running instances as `(unmanaged)`.
+ 
+-Without linking, use `node worker/mashang.mjs <command>`. Configure via `MASHANG_SERVICE_ROOT`, `MASHANG_HUB_ROOT`, `MASHANG_FETCH_ROOT`, `MASHANG_MIIT_ROOT`, `MYKNBASE_ROOT`, `MASHANG_RUNTIME_DIR`, `MASHANG_SCHEDULER_SERIES`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MASHANG_MIIT_URL`, `MASHANG_MIIT_UI_URL`, `MYKNBASE_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override (read by both the CLI and the Worker). The Hub exposes the same runtime over the protocol below.
++Without linking, use `node worker/mashang.mjs <command>`. Configure via `MASHANG_SERVICE_ROOT`, `MASHANG_HUB_ROOT`, `MASHANG_FETCH_ROOT`, `MASHANG_MIIT_ROOT`, `MYKNBASE_ROOT`, `MASHANG_RUNTIME_DIR`, `MASHANG_SCHEDULER_SERIES`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MASHANG_MIIT_URL`, `MASHANG_MIIT_UI_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override (read by both the CLI and the Worker). The Hub exposes the same runtime over the protocol below.
+ 
+ MIIT is controlled as an independent local service, like Fetch. Hub Runtime starts/stops `mashang-miit/scripts/dev.sh`; the MIIT repository continues to own its task ledger, data, reports and standalone workbench UI. The default entry is `http://127.0.0.1:8790`; set `MASHANG_MIIT_UI_URL` only when the browser needs a separately reachable URL. The local health probe remains on `MASHANG_MIIT_URL` and is not replaced by the browser URL.
+ 
+@@ -322,7 +322,7 @@
+ - Artifact payloads are base64 encoded in the WebSocket response and capped at 20 MB on the Worker.
+ - Full browser/mobile and Sealos deployment acceptance still require manual environment testing.
+ 
+-The `myknbase` Worker service and workspace now point to V2 (`~/Documents/github/mashang-knbase`), displayed as **mashang-knbase**, at `http://127.0.0.1:4317`. The Worker starts it with `npm start` and probes `/api/tree`. `MYKNBASE_ROOT` and `MYKNBASE_URL` remain available as overrides. V1 (`~/Desktop/myknbase`, port 7870) is no longer the default.
++Knbase is managed by its own local LaunchAgent and opens at http://127.0.0.1:4317. The Worker no longer registers or controls its runtime. Remove obsolete `myknbase` service overrides; the Worker ignores that retired service ID. The separate `MYKNBASE_ROOT` workspace mapping remains for Agent and historical artifact compatibility.
+ 
+ ## Publish Workspace 快照发布（默认关闭，待隔离部署）
+ 
+@@ -362,7 +362,7 @@
+ 
+ ## UI 0.3.2 · 统一入口
+ 
+-顶部 Service / Fetch / Knbase / Publish 切换整个工作空间。Service / Publish 保留各自对话，Fetch / Knbase 保留独立 UI；切换不执行任务。详情、可达地址配置与浏览器验收见 [0.3.2 工作空间说明](docs/ui-workspaces-v0.3.2.md)。正式 Publishing 仍默认关闭。
++顶部 Service / Fetch / MIIT / Publish / AKsignal 切换整个工作空间。Service / Publish 保留各自对话，Fetch / MIIT 保留独立 UI；切换不执行任务。详情、可达地址配置与浏览器验收见 [0.3.2 工作空间说明](docs/ui-workspaces-v0.3.2.md)。正式 Publishing 仍默认关闭。
+ 
+ ### Hub Runtime Execution Policy
+ 
+--- a/public/app.js
++++ b/public/app.js
+@@ -89,7 +89,6 @@
+ function renderIndependent() {
+   const app = ({
+     fetch: {serviceId:'fetch', title:'Fetch', heading:'独立工作台 · 由 Fetch 自身维护', description:'数据采集 · 内容解析 · 结果管理'},
+-    knbase: {serviceId:'myknbase', title:'Knbase', heading:'独立工作台 · 由 Knbase 自身维护', description:'资料浏览 · 知识检索 · 文档管理'},
+     miit: {serviceId:'miit', title:'MIIT', heading:'独立工作台 · 由 MIIT 自身维护', description:'公告采集 · 任务执行 · 报告浏览'},
+   })[currentWorkspace];
+   if (!app) return;
+@@ -212,7 +211,7 @@
+   $('#previewPublication').disabled = state.turnActive || submitting || !state.connected || !runtimeSnapshot?.operations?.some(item=>item.workspace === 'publish' && item.requiresSnapshot && item.enabled);
+   updateNoteActions();
+ }
+-function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = currentWorkspace === 'publish' ? (connected ? '已连接' : '连接中…') : `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); }
++function setConnection(connected, status = state.workerStatus) { for (const context of Object.values(conversations)) if (context) { context.connected = connected; context.workerStatus = status; } state.connected = connected; state.workerStatus = status; $("#connection").className = `connection ${connected ? "connected" : "disconnected"}`; $("#connection span").textContent = currentWorkspace === 'publish' ? (connected ? '已连接' : '连接中…') : `Mac Worker ${status === "BUSY" ? "Running" : connected ? "Online" : "Offline"}`; updateSendAvailability(); if (["fetch","miit"].includes(currentWorkspace)) renderIndependent(); }
+ function taskLabel(status) { return state === conversations.publish ? ({RUNNING:'正在整理',COMPLETED:'已完成',INTERRUPTED:'处理已中断',WAITING_PERMISSION:'等待确认'})[status] || TASK_LABELS[status] || status : TASK_LABELS[status] || status; }
+ function setStatus(status, label) { state.status = status; refreshExecutionInfo(); const el = $("#runState"); el.className = `run-state ${status.toLowerCase()}`; el.querySelector("span:last-child").textContent = label || taskLabel(status); if (state.turnActive) recordProcess(status, label); }
+ function setStatusLabel(label) { const el = optional("#runState"); if (el) el.querySelector("span:last-child").textContent = label; }
+@@ -516,7 +515,7 @@
+   if (event.taskId && !state.activeTaskId && state.turnActive) { state.earlyEvents.push(event); return; }
+   logEvent(event);
+   if (event.type === 'permission.resolved') { for (const item of [...(state.permissionQueue || [])]) if (!event.requestId || item.id === event.requestId) resolvePermission(state, item.id); return; }
+-  if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); if (event.type === "runtime.snapshot") { runtimeSnapshot = event.snapshot; updateSendAvailability(); if(currentWorkspace === "aksignal") renderMarketBinding(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); } return; }
++  if (event.type === "runtime.snapshot" || event.type === "runtime.control.permission.requested" || event.type === "runtime.control.updated") { runtimeUI.update(event); if (event.type === "runtime.snapshot") { runtimeSnapshot = event.snapshot; updateSendAvailability(); if(currentWorkspace === "aksignal") renderMarketBinding(); if (["fetch","miit"].includes(currentWorkspace)) renderIndependent(); } return; }
+   if (event.type === "worker.status") { state.models = event.models || state.models; for (const context of Object.values(conversations)) if (context) context.models = state.models; if (event.models) renderModelOptions(event.models); setConnection(["ONLINE", "BUSY"].includes(event.status), event.status); return; }
+   if (event.type === "session.mapped") { state.openCodeSessionId = event.openCodeSessionId; renderDebug(); return; }
+   if (event.type === "task.timeout.warning") { if (!isTerminalState()) { setStatusLabel("运行超时，正在尝试取消"); updateRunningLabel("运行超时，正在尝试取消"); } return; }
+@@ -636,6 +635,6 @@
+ 
+ optional("#debugToggle")?.addEventListener("click", () => optional("#debug")?.classList.toggle("hidden")); optional("#debugClose")?.addEventListener("click", () => optional("#debug")?.classList.add("hidden"));
+ const runtimeUI = initRuntimeUI();
+-async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } if (linkedContentSession) switchWorkspace("publish"); setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); fetch("/api/runtime").then(response=>response.json()).then(data=>{ runtimeSnapshot = data.snapshot; updateSendAvailability(); if (["fetch","knbase","miit"].includes(currentWorkspace)) renderIndependent(); }).catch(()=>{}); renderMessages(); connectEvents(); }
++async function initialize() { const response = await fetch("/api/auth/status"); const auth = await response.json(); if (auth.required && !auth.authenticated) { showLogin(); return; } if (linkedContentSession) switchWorkspace("publish"); setStatus("IDLE"); renderDebug(); updateCancelVisibility(); loadModels(); refreshConnection().then(() => ensureSession().catch(() => {})); fetch("/api/runtime").then(response=>response.json()).then(data=>{ runtimeSnapshot = data.snapshot; updateSendAvailability(); if (["fetch","miit"].includes(currentWorkspace)) renderIndependent(); }).catch(()=>{}); renderMessages(); connectEvents(); }
+ initialize();
+ setInterval(() => { if (!document.hidden) syncContentConversation(); }, 4000);
+--- a/public/index.html
++++ b/public/index.html
+@@ -12,7 +12,6 @@
+       <button type="button" data-workspace="service" class="workspace-tab active" aria-pressed="true"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V12m5 7V9m5 10v-6m5 6V5M3 8l6-4 5 4 7-6"/></svg></span><strong>Service</strong><small>汽车业务</small></button>
+       <button class="workspace-tab" type="button" data-workspace="aksignal" aria-pressed="false"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 19h18M4 15l5-7 5 4 6-9"/></svg></span><strong>AKsignal</strong><small>市场观察</small></button>
+       <button type="button" data-workspace="publish" class="workspace-tab" aria-pressed="false"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 18-7-6 18-4-7-8-4Zm8 4L21 3"/></svg></span><strong>Content</strong><small>记录与分发</small></button>
+-      <button type="button" data-workspace="knbase" class="workspace-tab" aria-pressed="false"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h4v16H4zM10 4h4v16h-4zM16 5l3-1 4 15-3 1z"/></svg></span><strong>Knbase</strong><small>知识工作台</small></button>
+       <button type="button" data-workspace="fetch" class="workspace-tab" aria-pressed="false"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c-5 5-5 13 0 18 5-5 5-13 0-18Z"/></svg></span><strong>Fetch</strong><small>数据采集</small></button>
+       <button type="button" data-workspace="miit" class="workspace-tab" aria-pressed="false"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v5h5M9 12h7M9 16h7"/></svg></span><strong>MIIT</strong><small>公告采集</small></button>
+     </nav>
+--- a/public/runtime-ui.js
++++ b/public/runtime-ui.js
+@@ -284,11 +284,11 @@
+     if (serviceStatus) serviceStatus.textContent = !workerOnline ? "Worker 离线" : snapshotStale() ? "状态快照过期" : "Worker 在线";
+     const drawerDescription = document.getElementById("runtimeDrawerDescription");
+     if (drawerDescription) drawerDescription.textContent = workspace === "aksignal" ? "AKsignal · Daily 与自动调度" : "Service · 服务、任务与自动调度";
+-    const mount = workspace === "aksignal" ? conversationMount : ["fetch", "knbase", "miit"].includes(workspace) ? independentMount : conversationMount;
++    const mount = workspace === "aksignal" ? conversationMount : ["fetch", "miit"].includes(workspace) ? independentMount : conversationMount;
+     runtimeStatusBar?.classList.toggle('hidden', workspace !== 'aksignal');
+     if (mount) {
+       // Older Workers may omit workspace metadata. Only presentation uses these legacy IDs/groups.
+-      const belongs = item => (item.workspace || ({fetch:"fetch",myknbase:"knbase"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
++      const belongs = item => (item.workspace || ({fetch:"fetch"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
+       const matchingServices = services.filter(belongs);
+       const matchingJobs = jobs.filter(belongs);
+       const matchingOperations = operations.filter(belongs);
+--- a/tests/runtime-registry.mjs
++++ b/tests/runtime-registry.mjs
+@@ -15,8 +15,8 @@
+ 
+ const registry = buildRegistry(env);
+ const ids = registry.services.map((service) => service.id);
+-assert.deepEqual(ids, ["fetch", "miit", "myknbase", "scheduler", "aksignal-scheduler"]);
+-assert.equal(registry.services.length, 5);
++assert.deepEqual(ids, ["fetch", "miit", "scheduler", "aksignal-scheduler"]);
++assert.equal(registry.services.length, 4);
+ assert.deepEqual(registry.dependencies.map((dependency) => dependency.id), ["opencode"]);
+ assert.equal(registry.jobs.length, 0);
+ assert.deepEqual(registry.operations.map((operation) => operation.id), ["aksignal-daily", "aksignal-comparison-update", "daily", "allupdate"]);
+@@ -35,8 +35,6 @@
+ assert.equal(registry.dependencies.find((d) => d.id === "opencode").probe.url, "http://127.0.0.1:5000/config/providers");
+ assert.equal(registry.services.find((s) => s.id === "fetch").probe.url, "http://127.0.0.1:6000/api/formats");
+ assert.equal(registry.services.find((s) => s.id === "fetch").openUrl, "http://127.0.0.1:6000");
+-assert.equal(registry.services.find((s) => s.id === "myknbase").probe.url, "http://127.0.0.1:7000/api/health");
+-assert.equal(registry.services.find((s) => s.id === "myknbase").openUrl, "http://127.0.0.1:7000");
+ assert.equal(registry.probeTimeoutMs, 1000);
+ 
+ assert.equal(registry.dependencies.find((d) => d.id === "opencode").logs[0].path, "/tmp/hub/.local/logs/opencode.log");
+@@ -110,26 +108,16 @@
+ assert.equal(fetch.probe.url, "http://127.0.0.1:9999/health");
+ assert.equal(fetch.probe.type, "http");
+ assert.ok(overridden.services.some((s) => s.id === "extra"));
+-assert.equal(overridden.services.length, 6);
++assert.equal(overridden.services.length, 5);
+ assert.equal(overridden.jobs.length, 0);
+ assert.equal(overridden.operations.length, 5);
+ assert.ok(overridden.operations.some((operation) => operation.id === "future-no-arg"), "Worker config can add an operation without a Hub mapping");
+ 
+ console.log("Runtime registry checks passed");
+ 
+-const knbase = buildRegistry({}).services.find(s => s.id === "myknbase");
+-assert.equal(knbase.openUrl, "http://127.0.0.1:4317");
+-assert.ok(knbase.control.start.cwd.endsWith("Documents/github/mashang-knbase"));
+-assert.deepEqual(knbase.control.start.args, ["start"]);
+-assert.equal(knbase.control.start.env.PORT, "4317");
+-assert.equal(knbase.control.start.env.KNBASE_RECOVER_STALE_LOCK, "1");
+-assert.ok(new RegExp(knbase.match).test("node server/main.mjs"));
+-assert.ok(!new RegExp(knbase.match).test("node server/index.js"));
+-assert.ok(!new RegExp(knbase.match).test("node server/main.mjs --root /tmp/trial --port 4318"));
+-
++assert.ok(!buildRegistry({}, { services: [{ id: "myknbase", match: "node", control: { start: { command: "npm" } } }] }).services.some(s => s.id === "myknbase"), "legacy overrides cannot restore retired controls");
+ const publicUi = buildRegistry({MASHANG_FETCH_UI_URL:"https://fetch.example.test/ui/",MYKNBASE_UI_URL:"https://knbase.example.test/"});
+ assert.equal(publicUi.services.find(service=>service.id==="fetch").openUrl,"https://fetch.example.test/ui/");
+-assert.equal(publicUi.services.find(service=>service.id==="myknbase").openUrl,"https://knbase.example.test/");
+ const miitUi = buildRegistry({MASHANG_MIIT_UI_URL:"https://miit.example.test/"}).services.find(service=>service.id==="miit");
+ assert.equal(miitUi.openUrl,"https://miit.example.test/");
+ assert.equal(miitUi.probe.url,"http://127.0.0.1:8790/");
+--- a/tests/runtime-ui.mjs
++++ b/tests/runtime-ui.mjs
+@@ -103,13 +103,13 @@
+ assert.match(elements.get("independentRuntime").innerHTML, /<dt>Runtime ID<\/dt><dd>miit<\/dd>/);
+ assert.match(elements.get("independentRuntime").innerHTML, /data-op="up" data-target="miit"/);
+ assert.doesNotMatch(elements.get("independentRuntime").innerHTML, /打开工作台 ↗/);
+-runtimeUI.setWorkspace("knbase");
+-assert.match(elements.get("independentRuntime").innerHTML, /data-op="up" data-target="myknbase"/);
+-runtimeUI.update({type:"runtime.control.updated",controlId:"active-1",op:"up",targetId:"myknbase",status:"RUNNING"});
++runtimeUI.setWorkspace("miit");
++assert.match(elements.get("independentRuntime").innerHTML, /data-op="up" data-target="miit"/);
++runtimeUI.update({type:"runtime.control.updated",controlId:"active-1",op:"up",targetId:"miit",status:"RUNNING"});
+ assert.match(elements.get("independentRuntime").innerHTML, /启动中/);
+ assert.match(elements.get("independentRuntime").innerHTML, /data-cancel="1"/);
+-runtimeUI.update({type:"runtime.control.updated",controlId:"active-1",op:"up",targetId:"myknbase",status:"COMPLETED"});
+-assert.match(elements.get("independentRuntime").innerHTML, /up · myknbase/);
++runtimeUI.update({type:"runtime.control.updated",controlId:"active-1",op:"up",targetId:"miit",status:"COMPLETED"});
++assert.match(elements.get("independentRuntime").innerHTML, /up · mashang-miit/);
+ assert.match(elements.get("independentRuntime").innerHTML, /<details class="runtime-history">/);
+ assert.match(elements.get("independentRuntime").innerHTML, /历史操作 ·/);
+ assert.doesNotMatch(elements.get("independentRuntime").innerHTML, /rt-current-actions/);
+--- a/tests/workbench-browser.mjs
++++ b/tests/workbench-browser.mjs
+@@ -38,7 +38,7 @@
+   await page.route('**/api/runtime/controls/ui-control/decision',async route=>{assert.equal(route.request().postDataJSON().approve,false);await route.fulfill({json:{}});});
+   await page.route('**/api/runtime/controls/miit-control/decision',async route=>{assert.equal(route.request().postDataJSON().approve,true);await route.fulfill({json:{}});});
+  await page.goto(base);await page.waitForFunction(()=>!document.querySelector('#send').disabled);
+-  assert.equal(await page.locator('.workspace-tab').count(),6);
++  assert.equal(await page.locator('.workspace-tab').count(),5);
+  assert.equal(await page.locator('#resultBody').isVisible(),false,'idle conversation must not show an empty result');
+  const nav=await page.locator('#workspaceNav').boundingBox(),area=await page.locator('.workspace-area').boundingBox();
+  assert.ok(nav.x+nav.width<=area.x,'navigation must sit to the left of the workspace');
+@@ -51,7 +51,7 @@
+   await page.locator('#independentRuntime [data-op="up"][data-target="miit"]').click();await page.waitForSelector('#independentRuntime [data-decision="approve"]');await page.locator('#independentRuntime [data-decision="approve"]').click();
+   send({type:'runtime.snapshot',protocolVersion:1,workerId:'ui-worker',sequence:2,generatedAt:new Date().toISOString(),dependencies:[],services:[{id:'fetch',label:'Fetch',status:'ONLINE',openUrl:'https://fetch.example.test/'},{id:'miit',workspace:'miit',label:'mashang-miit',status:'ONLINE',openUrl:'http://127.0.0.1:8790'},{id:'myknbase',label:'Knbase',status:'ONLINE',openUrl:'http://127.0.0.1:4317/'}],jobs:[],operations:[]});
+   await page.waitForFunction(()=>document.querySelector('#independentOpen').getAttribute('href')==='http://127.0.0.1:8790/');assert.match(await page.locator('#independentHeading').textContent(),/由 MIIT 自身维护/);
+-  await page.locator('[data-workspace="knbase"]').click();assert.match(await page.locator('#independentHint').textContent(),/本机地址/);
++  assert.equal(await page.locator('[data-workspace="knbase"]').count(),0);
+  await page.locator('[data-workspace="publish"]').click();assert.equal(await page.locator('#workspaceNotice').isVisible(),false);assert.equal(await page.locator('#contentModes').isVisible(),true);assert.equal(await page.locator('#prompt').inputValue(),'');
+  await page.locator('#prompt').fill('保留 Publish 草稿');await page.locator('[data-workspace="service"]').click();assert.equal(await page.locator('#prompt').inputValue(),'保留 Service 草稿');assert.equal(tasks.length,0,'navigation must never execute a task');
+  await page.locator('#prompt').fill('分析测试问题');await page.locator('#send').click();await until(()=>tasks.length===1);
+@@ -77,5 +77,5 @@
+   if(!workerOnline || age) assert.equal(await page.locator('.compact-service [data-op]').count(),0);
+  }
+  assert.deepEqual(errors,[]);
+-  console.log('Browser UI passed: six workspaces, MIIT independent runtime controls and UI link, selection without execution, isolated drafts/sessions/results, Markdown attachment preview, desktop/mobile layout');
++  console.log('Browser UI passed: five workspaces, MIIT independent runtime controls and UI link, selection without execution, isolated drafts/sessions/results, Markdown attachment preview, desktop/mobile layout');
+ }finally{await browser?.close();worker?.terminate();if(hub.exitCode===null){const exit=once(hub,'exit');hub.kill('SIGKILL');await exit;}rmSync(temp,{recursive:true,force:true});}
+--- a/worker/mashang.mjs
++++ b/worker/mashang.mjs
+@@ -34,7 +34,6 @@
+   MASHANG_FETCH_URL      default http://127.0.0.1:7860
+   MASHANG_MIIT_URL       default http://127.0.0.1:8790
+   MASHANG_MIIT_UI_URL    optional browser-accessible MIIT workbench URL
+-  MYKNBASE_URL           default http://127.0.0.1:4317
+   HUB_URL                worker registration target (default ws://127.0.0.1:3000)
+   MASHANG_RUNTIME_CONFIG path to a JSON {services,jobs,operations} override
+   RUNTIME_PROBE_TIMEOUT_MS  per-probe timeout, default 2500
+--- a/worker/runtime/registry.mjs
++++ b/worker/runtime/registry.mjs
+@@ -7,7 +7,6 @@
+ const DEFAULT_OPENCODE_URL = "http://127.0.0.1:4096";
+ const DEFAULT_FETCH_URL = "http://127.0.0.1:7860";
+ const DEFAULT_MIIT_URL = "http://127.0.0.1:8790";
+-const DEFAULT_MYKNBASE_URL = "http://127.0.0.1:4317";
+ 
+ export const DAILY_PIPELINE_STEPS = Object.freeze([
+   "refresh_daily",
+@@ -85,7 +84,6 @@
+   const hubRoot = env.MASHANG_HUB_ROOT || HUB_ROOT;
+   const fetchRoot = env.MASHANG_FETCH_ROOT || join(homedir(), "Documents/github/mashang-fetch");
+   const miitRoot = env.MASHANG_MIIT_ROOT || join(homedir(), "Documents/github/mashang-miit");
+-  const myknbaseRoot = env.MYKNBASE_ROOT || join(homedir(), "Documents/github/mashang-knbase");
+   const aksignalRoot = env.MASHANG_AKSIGNAL_ROOT || join(homedir(), "Documents/github/AKsignal");
+   const runtimeDir = env.MASHANG_RUNTIME_DIR || join(hubRoot, ".local/runtime");
+   const schedulerLogDir = join(serviceRoot, "logs/scheduler");
+@@ -93,9 +91,7 @@
+   const opencodeURL = trimSlash(env.OPENCODE_URL || DEFAULT_OPENCODE_URL);
+   const fetchURL = trimSlash(env.MASHANG_FETCH_URL || DEFAULT_FETCH_URL);
+   const miitURL = trimSlash(env.MASHANG_MIIT_URL || DEFAULT_MIIT_URL);
+-  const myknbaseURL = trimSlash(env.MYKNBASE_URL || DEFAULT_MYKNBASE_URL);
+   const miitPort = portOf(miitURL, "8790");
+-  const myknbasePort = portOf(myknbaseURL, "4317");
+   const schedulerSeries = env.MASHANG_SCHEDULER_SERIES || "";
+   const probeTimeoutMs = Number(env.RUNTIME_PROBE_TIMEOUT_MS) > 0 ? Number(env.RUNTIME_PROBE_TIMEOUT_MS) : 2500;
+   const verifyMs = Number(env.RUNTIME_CONTROL_VERIFY_MS) > 0 ? Number(env.RUNTIME_CONTROL_VERIFY_MS) : 15000;
+@@ -147,22 +143,6 @@
+         control: {
+           start: { command: "./scripts/dev.sh", args: ["start"], cwd: miitRoot, detach: false, env: { PORT: miitPort } },
+           stop: { command: "./scripts/dev.sh", args: ["stop"], cwd: miitRoot, env: { PORT: miitPort } },
+-        },
+-      },
+-      {
+-        id: "myknbase",
+-        workspace: "knbase",
+-        label: "mashang-knbase",
+-        group: "APPS",
+-        category: "service",
+-        description: "个人本地知识库",
+-        openUrl: env.MYKNBASE_UI_URL || originOf(myknbaseURL),
+-        probe: { type: "http", url: `${myknbaseURL}/api/health` },
+-        match: "node(?: .*?)? server/main\\.mjs$",
+-        logs: [],
+-        control: {
+-          start: { command: "npm", args: ["start"], cwd: myknbaseRoot, detach: true, env: { PORT: String(myknbasePort), KNBASE_RECOVER_STALE_LOCK: "1" } },
+-          stop: { signal: "SIGTERM", timeoutMs: stopTimeoutMs },
+         },
+       },
+       {
+@@ -277,7 +257,7 @@
+     verifyMs: config.verifyMs || defaults.verifyMs,
+     runtimeDir: config.runtimeDir || defaults.runtimeDir,
+     dependencies: mergeById(defaults.dependencies, config.dependencies),
+-    services: mergeById(defaults.services, config.services),
++    services: mergeById(defaults.services, config.services).filter(entry => entry.id !== "myknbase"),
+     jobs: mergeById(defaults.jobs, config.jobs),
+     operations: mergeById(defaults.operations, config.operations),
+   };
