@@ -284,11 +284,11 @@ export function initRuntimeUI() {
     if (serviceStatus) serviceStatus.textContent = !workerOnline ? "Worker 离线" : snapshotStale() ? "状态快照过期" : "Worker 在线";
     const drawerDescription = document.getElementById("runtimeDrawerDescription");
     if (drawerDescription) drawerDescription.textContent = workspace === "aksignal" ? "AKsignal · Daily 与自动调度" : "Service · 服务、任务与自动调度";
-    const mount = workspace === "aksignal" ? conversationMount : ["fetch", "knbase", "miit"].includes(workspace) ? independentMount : conversationMount;
+    const mount = workspace === "aksignal" ? conversationMount : ["fetch", "miit"].includes(workspace) ? independentMount : conversationMount;
     runtimeStatusBar?.classList.toggle('hidden', workspace !== 'aksignal');
     if (mount) {
       // Older Workers may omit workspace metadata. Only presentation uses these legacy IDs/groups.
-      const belongs = item => (item.workspace || ({fetch:"fetch",myknbase:"knbase"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
+      const belongs = item => (item.workspace || ({fetch:"fetch"})[item.id] || (item.group === "MASHANG-SERVICE" ? "service" : null)) === workspace;
       const matchingServices = services.filter(belongs);
       const matchingJobs = jobs.filter(belongs);
       const matchingOperations = operations.filter(belongs);

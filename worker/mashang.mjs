@@ -34,7 +34,6 @@ Environment:
   MASHANG_FETCH_URL      default http://127.0.0.1:7860
   MASHANG_MIIT_URL       default http://127.0.0.1:8790
   MASHANG_MIIT_UI_URL    optional browser-accessible MIIT workbench URL
-  MYKNBASE_URL           default http://127.0.0.1:4317
   HUB_URL                worker registration target (default ws://127.0.0.1:3000)
   MASHANG_RUNTIME_CONFIG path to a JSON {services,jobs,operations} override
   RUNTIME_PROBE_TIMEOUT_MS  per-probe timeout, default 2500

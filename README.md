@@ -135,7 +135,7 @@ mashang run <job|operation> # run a declared job or no-argument operation
 mashang logs [id] [--lines N] [--follow] [--all] [--json]
 ```
 
-Services: `fetch`, `miit`, `myknbase`, `scheduler`. Operations: `daily`, `allupdate`.
+Services include `fetch`, `miit`, and `scheduler`. Operations: `daily`, `allupdate`.
 
 Safety model:
 
@@ -143,7 +143,7 @@ Safety model:
 - `up` is a no-op when the canonical process is already running, so a stale process is never "re-legitimized". If only a legacy process exists, `up` warns and starts the canonical entry; `down` refuses to stop legacy-only processes.
 - Instances started by `mashang` are tracked under `MASHANG_RUNTIME_DIR` (default `<hub>/.local/runtime/`) and stopped by process group. `status` marks untracked running instances as `(unmanaged)`.
 
-Without linking, use `node worker/mashang.mjs <command>`. Configure via `MASHANG_SERVICE_ROOT`, `MASHANG_HUB_ROOT`, `MASHANG_FETCH_ROOT`, `MASHANG_MIIT_ROOT`, `MYKNBASE_ROOT`, `MASHANG_RUNTIME_DIR`, `MASHANG_SCHEDULER_SERIES`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MASHANG_MIIT_URL`, `MASHANG_MIIT_UI_URL`, `MYKNBASE_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override (read by both the CLI and the Worker). The Hub exposes the same runtime over the protocol below.
+Without linking, use `node worker/mashang.mjs <command>`. Configure via `MASHANG_SERVICE_ROOT`, `MASHANG_HUB_ROOT`, `MASHANG_FETCH_ROOT`, `MASHANG_MIIT_ROOT`, `MYKNBASE_ROOT`, `MASHANG_RUNTIME_DIR`, `MASHANG_SCHEDULER_SERIES`, `OPENCODE_URL`, `MASHANG_FETCH_URL`, `MASHANG_MIIT_URL`, `MASHANG_MIIT_UI_URL`, or an optional `MASHANG_RUNTIME_CONFIG` JSON override (read by both the CLI and the Worker). The Hub exposes the same runtime over the protocol below.
 
 MIIT is controlled as an independent local service, like Fetch. Hub Runtime starts/stops `mashang-miit/scripts/dev.sh`; the MIIT repository continues to own its task ledger, data, reports and standalone workbench UI. The default entry is `http://127.0.0.1:8790`; set `MASHANG_MIIT_UI_URL` only when the browser needs a separately reachable URL. The local health probe remains on `MASHANG_MIIT_URL` and is not replaced by the browser URL.
 
@@ -322,7 +322,7 @@ Configure Sealos ingress for HTTPS and use the resulting `https://` URL as the W
 - Artifact payloads are base64 encoded in the WebSocket response and capped at 20 MB on the Worker.
 - Full browser/mobile and Sealos deployment acceptance still require manual environment testing.
 
-The `myknbase` Worker service and workspace now point to V2 (`~/Documents/github/mashang-knbase`), displayed as **mashang-knbase**, at `http://127.0.0.1:4317`. The Worker starts it with `npm start` and probes `/api/tree`. `MYKNBASE_ROOT` and `MYKNBASE_URL` remain available as overrides. V1 (`~/Desktop/myknbase`, port 7870) is no longer the default.
+Knbase is managed by its own local LaunchAgent and opens at http://127.0.0.1:4317. The Worker no longer registers or controls its runtime. Remove obsolete `myknbase` service overrides; the Worker ignores that retired service ID. The separate `MYKNBASE_ROOT` workspace mapping remains for Agent and historical artifact compatibility.
 
 ## Publish Workspace 快照发布（默认关闭，待隔离部署）
 
@@ -362,7 +362,7 @@ P3 的环境与签名授权要求见 [Publishing 隔离方案](docs/publishing-i
 
 ## UI 0.3.2 · 统一入口
 
-顶部 Service / Fetch / Knbase / Publish 切换整个工作空间。Service / Publish 保留各自对话，Fetch / Knbase 保留独立 UI；切换不执行任务。详情、可达地址配置与浏览器验收见 [0.3.2 工作空间说明](docs/ui-workspaces-v0.3.2.md)。正式 Publishing 仍默认关闭。
+顶部 Service / Fetch / MIIT / Publish / AKsignal 切换整个工作空间。Service / Publish 保留各自对话，Fetch / MIIT 保留独立 UI；切换不执行任务。详情、可达地址配置与浏览器验收见 [0.3.2 工作空间说明](docs/ui-workspaces-v0.3.2.md)。正式 Publishing 仍默认关闭。
 
 ### Hub Runtime Execution Policy
 

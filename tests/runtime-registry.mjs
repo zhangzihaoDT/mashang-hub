@@ -15,8 +15,8 @@ const env = {
 
 const registry = buildRegistry(env);
 const ids = registry.services.map((service) => service.id);
-assert.deepEqual(ids, ["fetch", "miit", "myknbase", "scheduler", "aksignal-scheduler"]);
-assert.equal(registry.services.length, 5);
+assert.deepEqual(ids, ["fetch", "miit", "scheduler", "aksignal-scheduler"]);
+assert.equal(registry.services.length, 4);
 assert.deepEqual(registry.dependencies.map((dependency) => dependency.id), ["opencode"]);
 assert.equal(registry.jobs.length, 0);
 assert.deepEqual(registry.operations.map((operation) => operation.id), ["aksignal-daily", "aksignal-comparison-update", "daily", "allupdate"]);
@@ -35,8 +35,6 @@ assert.equal(allupdate.enabled, true);
 assert.equal(registry.dependencies.find((d) => d.id === "opencode").probe.url, "http://127.0.0.1:5000/config/providers");
 assert.equal(registry.services.find((s) => s.id === "fetch").probe.url, "http://127.0.0.1:6000/api/formats");
 assert.equal(registry.services.find((s) => s.id === "fetch").openUrl, "http://127.0.0.1:6000");
-assert.equal(registry.services.find((s) => s.id === "myknbase").probe.url, "http://127.0.0.1:7000/api/tree");
-assert.equal(registry.services.find((s) => s.id === "myknbase").openUrl, "http://127.0.0.1:7000");
 assert.equal(registry.probeTimeoutMs, 1000);
 
 assert.equal(registry.dependencies.find((d) => d.id === "opencode").logs[0].path, "/tmp/hub/.local/logs/opencode.log");
@@ -110,26 +108,16 @@ assert.equal(fetch.label, "custom-fetch");
 assert.equal(fetch.probe.url, "http://127.0.0.1:9999/health");
 assert.equal(fetch.probe.type, "http");
 assert.ok(overridden.services.some((s) => s.id === "extra"));
-assert.equal(overridden.services.length, 6);
+assert.equal(overridden.services.length, 5);
 assert.equal(overridden.jobs.length, 0);
 assert.equal(overridden.operations.length, 5);
 assert.ok(overridden.operations.some((operation) => operation.id === "future-no-arg"), "Worker config can add an operation without a Hub mapping");
 
 console.log("Runtime registry checks passed");
 
-const knbase = buildRegistry({}).services.find(s => s.id === "myknbase");
-assert.equal(knbase.openUrl, "http://127.0.0.1:4317");
-assert.ok(knbase.control.start.cwd.endsWith("Documents/github/mashang-knbase"));
-assert.deepEqual(knbase.control.start.args, ["start"]);
-assert.equal(knbase.control.start.env.PORT, "4317");
-assert.equal(knbase.control.start.env.KNBASE_RECOVER_STALE_LOCK, "1");
-assert.ok(new RegExp(knbase.match).test("node server/main.mjs"));
-assert.ok(!new RegExp(knbase.match).test("node server/index.js"));
-assert.ok(!new RegExp(knbase.match).test("node server/main.mjs --root /tmp/trial --port 4318"));
-
+assert.ok(!buildRegistry({}, { services: [{ id: "myknbase", match: "node", control: { start: { command: "npm" } } }] }).services.some(s => s.id === "myknbase"), "legacy overrides cannot restore retired controls");
 const publicUi = buildRegistry({MASHANG_FETCH_UI_URL:"https://fetch.example.test/ui/",MYKNBASE_UI_URL:"https://knbase.example.test/"});
 assert.equal(publicUi.services.find(service=>service.id==="fetch").openUrl,"https://fetch.example.test/ui/");
-assert.equal(publicUi.services.find(service=>service.id==="myknbase").openUrl,"https://knbase.example.test/");
 const miitUi = buildRegistry({MASHANG_MIIT_UI_URL:"https://miit.example.test/"}).services.find(service=>service.id==="miit");
 assert.equal(miitUi.openUrl,"https://miit.example.test/");
 assert.equal(miitUi.probe.url,"http://127.0.0.1:8790/");
