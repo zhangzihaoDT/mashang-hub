@@ -1,5 +1,7 @@
 # Knbase P3 生产交接记录
 
+> Knbase Standalone v1 — 本机生产交付完成，远程 Hub 清理待发布。
+
 2026-11-06 14:10，北京时间。已获用户授权。本机运行管理权交接通过。
 
 - 独立发布 revision 为 `aaea72ab4dde6a12b5bdbbd789dceb3070211b55`。用户级 `local.knbase.web` PID 68432 为 supervisor 68446 的父进程。HTTP 进程 68447 是 supervisor 的子进程，同时是 127.0.0.1:4317 的唯一监听者及资料库写锁持有者。健康检查通过。
